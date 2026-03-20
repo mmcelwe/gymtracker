@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#080808"/>
+  <!-- Barbell bar -->
+  <rect x="116" y="244" width="280" height="24" rx="12" fill="#2a2a2a"/>
+  <!-- Left plates -->
+  <rect x="76" y="176" width="48" height="160" rx="12" fill="#FF6B35"/>
+  <rect x="104" y="196" width="32" height="120" rx="8" fill="#00D4FF"/>
+  <!-- Right plates -->
+  <rect x="388" y="176" width="48" height="160" rx="12" fill="#A8FF3E"/>
+  <rect x="376" y="196" width="32" height="120" rx="8" fill="#FF3E9D"/>
+  <!-- Left collar -->
+  <rect x="60" y="232" width="24" height="48" rx="6" fill="#444"/>
+  <!-- Right collar -->
+  <rect x="428" y="232" width="24" height="48" rx="6" fill="#444"/>
+  <!-- GFT text -->
+  <text x="256" y="430" text-anchor="middle" font-family="sans-serif" font-weight="900" font-size="64" fill="#F0F0F0" letter-spacing="16">GFT</text>
+</svg>
