@@ -2048,9 +2048,8 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
   const [barbellIdx, setBarbellIdx] = useState(0);
   const barbellWt = barbellOpts[barbellIdx];
 
-  const targetLbs = useKg
-    ? parseFloat((parseFloat(weightKg)*2.20462).toFixed(1))
-    : parseFloat(weightKg)||0;
+  // weightKg is always stored in kg — convert to lbs for plate calculation
+  const targetLbs = parseFloat((parseFloat(weightKg)*2.20462).toFixed(1))||0;
   const barbellLbs = useKg
     ? parseFloat((barbellWt*2.20462).toFixed(1))
     : barbellWt;

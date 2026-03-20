@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gym-tracker-v1';
+const CACHE_NAME = 'gym-tracker-v2';
 
 // Core files to cache on install
 const CORE_ASSETS = [
