@@ -3,6 +3,8 @@
   "short_name": "Gym Tracker",
   "description": "Multi-athlete gym workout tracker",
   "start_url": "./gym-tracker.html",
+  "scope": "./",
+  "id": "gym-tracker",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#080808",

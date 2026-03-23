@@ -4958,8 +4958,28 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   </script>
   <script>
     if('serviceWorker' in navigator){
-      window.addEventListener('load',()=>{
-        navigator.serviceWorker.register('sw.js').catch(()=>{});
+      window.addEventListener('load', async ()=>{
+        try {
+          const reg = await navigator.serviceWorker.register('sw.js');
+          // Check for updates periodically
+          reg.addEventListener('updatefound', ()=>{
+            const newWorker = reg.installing;
+            newWorker.addEventListener('statechange', ()=>{
+              if(newWorker.state==='activated' && navigator.serviceWorker.controller){
+                // New SW activated — reload to get fresh assets
+                window.location.reload();
+              }
+            });
+          });
+        } catch(e) {
+          console.warn('SW registration failed:', e);
+          // If SW fails, unregister all and try clean
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for(const r of regs) await r.unregister();
+          // Clear caches
+          const keys = await caches.keys();
+          for(const k of keys) await caches.delete(k);
+        }
       });
     }
   </script>

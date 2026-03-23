@@ -1,18 +1,19 @@
-const CACHE_NAME = 'gym-tracker-v2';
+const CACHE_NAME = 'gym-tracker-v3';
 
-// Core files to cache on install
+// Core local files to cache on install
 const CORE_ASSETS = [
   './',
   './gym-tracker.html',
   './manifest.json',
   './icon.svg',
-  'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js',
-  'https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700;900&family=Barlow+Condensed:wght@400;600;700;900&display=swap'
+  './icon-192.png',
+  './icon-512.png'
 ];
 
-// Install: cache core assets
+// CDN assets cached on first fetch (not during install, to avoid opaque response failures)
+const CDN_HOSTS = ['cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
+
+// Install: cache only local assets (these always succeed)
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
@@ -21,7 +22,7 @@ self.addEventListener('install', event => {
   );
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches, take control immediately
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -30,7 +31,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch: serve from cache first, fall back to network, cache new responses
+// Fetch: cache-first for everything, with network fallback
 self.addEventListener('fetch', event => {
   const req = event.request;
 
@@ -42,23 +43,18 @@ self.addEventListener('fetch', event => {
       if (cached) return cached;
 
       return fetch(req).then(response => {
-        // Don't cache non-ok responses or opaque responses we can't inspect
-        if (!response || response.status !== 200) {
-          // For cross-origin (opaque) responses, cache them anyway (fonts, CDN)
-          if (response && response.type === 'opaque') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
-            return response;
-          }
-          return response;
+        // Cache successful responses and opaque CDN responses
+        const isCdn = CDN_HOSTS.some(h => req.url.includes(h));
+        const shouldCache = (response.status === 200) || (response.type === 'opaque' && isCdn);
+
+        if (shouldCache) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
         }
 
-        // Cache the new response
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
         return response;
       }).catch(() => {
-        // Network failed and not in cache — return offline fallback for HTML
+        // Network failed and not in cache — return the main HTML as fallback
         if (req.headers.get('accept')?.includes('text/html')) {
           return caches.match('./gym-tracker.html');
         }
