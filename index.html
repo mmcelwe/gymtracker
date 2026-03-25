@@ -1286,7 +1286,7 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
 
   const rows = mode==="sym" ? rows_sym : rows_alpha;
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}
       onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -1369,7 +1369,8 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
         </div>
       </div>
       <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
-    </div>
+    </div>,
+    document.body
   );
 }
 // ─── TouchTextInput — tap to open QWERTY keyboard ────────────────────────────
@@ -1430,7 +1431,7 @@ function NumPad({ value, onConfirm, onClose, color, label, unit="" }) {
     setV(s=>s+k);
   }
   const keys=[["7","8","9"],["4","5","6"],["1","2","3"],["C","0","⌫"]];
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -1469,7 +1470,8 @@ function NumPad({ value, onConfirm, onClose, color, label, unit="" }) {
           borderRadius:18,fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,
           cursor:"pointer",boxShadow:`0 4px 24px ${color}44`}}>CONFIRM</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1792,21 +1794,44 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // SESSION SCREEN — side-by-side panels (fixed fullscreen)
 // ══════════════════════════════════════════════════════════════════════════════
-function SessionScreen({ activeIds: initialIds, users, programs, history, onSaveWorkout, onSaveAsProgram, onBack }) {
+function SessionScreen({ activeIds: initialIds, users, programs, history, onSaveWorkout, onSaveAsProgram, onBack, onManage, onUpdateProgram }) {
   const [currentIds, setCurrentIds] = useState(initialIds);
+  const [leftIds, setLeftIds] = useState([]); // athletes who left but session continues
   const [showAddPicker, setShowAddPicker] = useState(false);
+  const [managingUser, setManagingUser] = useState(null); // uid of user viewing manage
   const active = users.filter(u => currentIds.includes(u.id));
-  const available = users.filter(u => !currentIds.includes(u.id));
-  const cols = active.length;
+  const left = users.filter(u => leftIds.includes(u.id));
+  const available = users.filter(u => !currentIds.includes(u.id) && !leftIds.includes(u.id));
+  const cols = active.length + left.length;
 
   function addAthlete(uid) {
     setCurrentIds(ids => [...ids, uid]);
+    setLeftIds(ids => ids.filter(id => id !== uid));
     setShowAddPicker(false);
   }
 
   function removeAthlete(uid) {
-    const next = currentIds.filter(id => id !== uid);
-    if (next.length === 0) { onBack(); } else { setCurrentIds(next); }
+    const nextActive = currentIds.filter(id => id !== uid);
+    if (nextActive.length === 0 && leftIds.length === 0) {
+      onBack();
+    } else {
+      setCurrentIds(nextActive);
+      setLeftIds(ids => [...ids, uid]);
+    }
+  }
+
+  function rejoinAthlete(uid) {
+    setLeftIds(ids => ids.filter(id => id !== uid));
+    setCurrentIds(ids => [...ids, uid]);
+  }
+
+  function fullyRemoveAthlete(uid) {
+    const nextLeft = leftIds.filter(id => id !== uid);
+    if (currentIds.length === 0 && nextLeft.length === 0) {
+      onBack();
+    } else {
+      setLeftIds(nextLeft);
+    }
   }
 
   return (
@@ -1823,7 +1848,7 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
       }}>
         <Btn label="✕ END ALL" size="sm" bg="transparent" color="#555" border="#1e1e1e" onClick={onBack} />
 
-        {/* Centre: active athlete name badges */}
+        {/* Centre: active + left athlete name badges */}
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           {active.map(u => (
             <div key={u.id} style={{ display:"flex", alignItems:"center", gap:5,
@@ -1832,6 +1857,15 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
               <span style={{ fontSize:14 }}>{u.emoji}</span>
               <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12,
                 letterSpacing:1, color:u.color }}>{u.name.toUpperCase()}</div>
+            </div>
+          ))}
+          {left.map(u => (
+            <div key={u.id} style={{ display:"flex", alignItems:"center", gap:5,
+              background:"#1a1a1a", border:"1px solid #2a2a2a",
+              borderRadius:8, padding:"4px 10px", opacity:0.4 }}>
+              <span style={{ fontSize:14 }}>{u.emoji}</span>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12,
+                letterSpacing:1, color:"#555" }}>{u.name.toUpperCase()}</div>
             </div>
           ))}
         </div>
@@ -1858,13 +1892,13 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
       <div style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        flex: 1, minHeight: 0, overflow: "hidden"
+        flex: 1, minHeight: 0, overflow: "clip"
       }}>
         {active.map((u, i) => (
           <div key={u.id} style={{
-            borderRight: i < cols - 1 ? "2px solid #1a1a1a" : "none",
+            borderRight: (i < active.length - 1 || left.length > 0) ? "2px solid #1a1a1a" : "none",
             display: "flex", flexDirection: "column",
-            minHeight: 0, overflow: "hidden", position: "relative"
+            minHeight: 0, overflow: "clip", position: "relative"
           }}>
             <WorkoutPanel
               user={u} program={programs[u.id]}
@@ -1875,7 +1909,78 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
             />
           </div>
         ))}
+
+        {/* Idle panels for athletes who left */}
+        {left.map((u, i) => {
+          const prog = programs[u.id];
+          const totalSessions = Object.keys(history[u.id]||{}).length;
+          return (
+            <div key={u.id} style={{
+              borderRight: i < left.length - 1 ? "2px solid #1a1a1a" : "none",
+              display: "flex", flexDirection: "column",
+              minHeight: 0, background: "#0a0a0a", position: "relative"
+            }}>
+              {/* Header */}
+              <div style={{background:"#0d0d0d",borderBottom:`3px solid ${u.color}33`,padding:"14px 18px",
+                display:"flex",alignItems:"center",gap:14,flexShrink:0}}>
+                <Avatar user={u} size={44} />
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:u.color,letterSpacing:2,lineHeight:1,opacity:0.6}}>{u.name}</div>
+                  <div style={{color:"#333",fontSize:11,letterSpacing:2}}>SESSION ENDED</div>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                justifyContent:"center",gap:14,padding:24}}>
+                <div style={{fontSize:42,opacity:0.4}}>{u.emoji}</div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#333",
+                  letterSpacing:3,textAlign:"center",lineHeight:1.2}}>
+                  DONE FOR<br/>TODAY?
+                </div>
+                <div style={{color:"#2a2a2a",fontSize:11,textAlign:"center",maxWidth:200,lineHeight:1.5}}>
+                  {prog?.name} · {totalSessions} sessions logged
+                </div>
+
+                <div style={{display:"flex",flexDirection:"column",gap:10,width:"100%",maxWidth:240,marginTop:8}}>
+                  <Btn full label="↩ REJOIN SESSION" bg={u.color} color="#000"
+                    onClick={()=>rejoinAthlete(u.id)}/>
+                  <Btn full label="📋 MANAGE PROGRAM" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser(u.id)}/>
+                  <Btn full label="✕ LEAVE" bg="transparent" color="#555" border="#1e1e1e"
+                    onClick={()=>fullyRemoveAthlete(u.id)}/>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      {/* Manage overlay for left athletes */}
+      {managingUser && (()=>{
+        const mu = users.find(u=>u.id===managingUser);
+        if(!mu) return null;
+        return (
+          <div style={{position:"absolute",inset:0,zIndex:300,background:"#080808",
+            display:"flex",flexDirection:"column",overflow:"auto"}}>
+            <div style={{background:"#0d0d0d",borderBottom:`3px solid ${mu.color}`,padding:"16px 24px",
+              display:"flex",alignItems:"center",gap:16,flexShrink:0}}>
+              <Btn label="← BACK" size="sm" bg="transparent" color="#555" border="#1e1e1e"
+                onClick={()=>setManagingUser(null)}/>
+              <Avatar user={mu} size={40}/>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:mu.color,letterSpacing:2,lineHeight:1}}>{mu.name}</div>
+                <div style={{color:"#444",fontSize:11,letterSpacing:2}}>PROGRAM EDITOR</div>
+              </div>
+            </div>
+            <div style={{flex:1,overflow:"auto"}}>
+              <ProgramEditor user={mu} program={programs[mu.id]}
+                onSave={p=>{onUpdateProgram(mu.id,p);setManagingUser(null);}}
+                onBack={()=>setManagingUser(null)}/>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* JOIN SESSION picker overlay */}
       {showAddPicker && (
@@ -1977,7 +2082,7 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
     ? allNames.filter(n=>n.toLowerCase().includes(query.toLowerCase()))
     : allNames;
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -2028,7 +2133,8 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -3036,7 +3142,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
 // ─── Plate Calculator ─────────────────────────────────────────────────────────
 function calcPlates(targetLbs, barbellLbs=45) {
-  const plates = [45,35,25,10,5,2.5];
+  const plates = [45,35,25,10,5,2.5,0.5];
   let remaining = (targetLbs - barbellLbs) / 2;
   if(remaining <= 0) return [];
   const result = [];
@@ -3061,11 +3167,11 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
     : barbellWt;
 
   const plateList = calcPlates(targetLbs, barbellLbs);
-  const PLATE_COLORS = {45:"#FF6B35",35:"#00D4FF",25:"#A8FF3E",10:"#888",5:"#aaa",2.5:"#555"};
+  const PLATE_COLORS = {45:"#FF6B35",35:"#00D4FF",25:"#A8FF3E",10:"#888",5:"#aaa",2.5:"#555",0.5:"#444"};
 
   const totalCheck = barbellLbs + plateList.reduce((a,p)=>a+p.weight*p.count*2, 0);
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9600,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -3148,7 +3254,8 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -5931,7 +6038,9 @@ function App() {
 
   if(screen==="session") return (
     <><SessionScreen activeIds={activeIds} users={users} programs={programs}
-      history={history} onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram} onBack={()=>setScreen("home")}/><BackupOverlay/></>
+      history={history} onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram}
+      onUpdateProgram={updateProgram}
+      onBack={()=>setScreen("home")}/><BackupOverlay/></>
   );
   if(screen==="manage") return (
     <><ManageScreen users={users} programs={programs} history={history} goals={goals}
