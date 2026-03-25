@@ -1794,11 +1794,11 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // SESSION SCREEN — side-by-side panels (fixed fullscreen)
 // ══════════════════════════════════════════════════════════════════════════════
-function SessionScreen({ activeIds: initialIds, users, programs, history, onSaveWorkout, onSaveAsProgram, onBack, onManage, onUpdateProgram }) {
+function SessionScreen({ activeIds: initialIds, users, programs, history, goals, onSaveWorkout, onSaveAsProgram, onBack, onUpdateProgram, onUpdateUser, onUpdateGoals, onUpdateHistory }) {
   const [currentIds, setCurrentIds] = useState(initialIds);
   const [leftIds, setLeftIds] = useState([]); // athletes who left but session continues
   const [showAddPicker, setShowAddPicker] = useState(false);
-  const [managingUser, setManagingUser] = useState(null); // uid of user viewing manage
+  const [managingUser, setManagingUser] = useState(null); // {uid, view:"menu"|"edit"|"program"|"progress"|"sessions"} or null
   const active = users.filter(u => currentIds.includes(u.id));
   const left = users.filter(u => leftIds.includes(u.id));
   const available = users.filter(u => !currentIds.includes(u.id) && !leftIds.includes(u.id));
@@ -1942,11 +1942,17 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
                   {prog?.name} · {totalSessions} sessions logged
                 </div>
 
-                <div style={{display:"flex",flexDirection:"column",gap:10,width:"100%",maxWidth:240,marginTop:8}}>
+                <div style={{display:"flex",flexDirection:"column",gap:10,width:"100%",maxWidth:260,marginTop:8}}>
                   <Btn full label="↩ REJOIN SESSION" bg={u.color} color="#000"
                     onClick={()=>rejoinAthlete(u.id)}/>
-                  <Btn full label="📋 MANAGE PROGRAM" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
-                    onClick={()=>setManagingUser(u.id)}/>
+                  <Btn full label="👤 EDIT PROFILE" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"edit"})}/>
+                  <Btn full label="📋 BUILD / EDIT PROGRAM" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"program"})}/>
+                  <Btn full label="📈 VIEW PROGRESS" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"progress"})}/>
+                  <Btn full label="📝 EDIT SESSIONS" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"sessions"})}/>
                   <Btn full label="✕ LEAVE" bg="transparent" color="#555" border="#1e1e1e"
                     onClick={()=>fullyRemoveAthlete(u.id)}/>
                 </div>
@@ -1956,28 +1962,100 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
         })}
       </div>
 
-      {/* Manage overlay for left athletes */}
+      {/* Manage overlay for left athletes — full manage access */}
       {managingUser && (()=>{
-        const mu = users.find(u=>u.id===managingUser);
+        const mu = users.find(u=>u.id===managingUser.uid);
         if(!mu) return null;
+        const mv = managingUser.view;
+
+        const header = (title) => (
+          <div style={{background:"#0d0d0d",borderBottom:`3px solid ${mu.color}`,padding:"16px 24px",
+            display:"flex",alignItems:"center",gap:16,flexShrink:0}}>
+            <Btn label="← BACK" size="sm" bg="transparent" color="#555" border="#1e1e1e"
+              onClick={()=>setManagingUser(null)}/>
+            <Avatar user={mu} size={40}/>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:mu.color,letterSpacing:2,lineHeight:1}}>{mu.name}</div>
+              <div style={{color:"#444",fontSize:11,letterSpacing:2}}>{title}</div>
+            </div>
+          </div>
+        );
+
         return (
           <div style={{position:"absolute",inset:0,zIndex:300,background:"#080808",
-            display:"flex",flexDirection:"column",overflow:"auto"}}>
-            <div style={{background:"#0d0d0d",borderBottom:`3px solid ${mu.color}`,padding:"16px 24px",
-              display:"flex",alignItems:"center",gap:16,flexShrink:0}}>
-              <Btn label="← BACK" size="sm" bg="transparent" color="#555" border="#1e1e1e"
-                onClick={()=>setManagingUser(null)}/>
-              <Avatar user={mu} size={40}/>
-              <div style={{flex:1}}>
-                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:mu.color,letterSpacing:2,lineHeight:1}}>{mu.name}</div>
-                <div style={{color:"#444",fontSize:11,letterSpacing:2}}>PROGRAM EDITOR</div>
+            display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+            {/* Edit Profile — UserEditModal renders its own Modal overlay */}
+            {mv==="edit" && (
+              <UserEditModal user={mu}
+                onSave={u=>{onUpdateUser(u);setManagingUser(null);}}
+                onClose={()=>setManagingUser(null)}/>
+            )}
+
+            {/* Program Editor */}
+            {mv==="program" && (
+              <div style={{flex:1,overflow:"auto"}}>
+                <ProgramEditor user={mu} program={programs[mu.id]}
+                  onSave={p=>{onUpdateProgram(mu.id,p);setManagingUser(null);}}
+                  onBack={()=>setManagingUser(null)}/>
               </div>
-            </div>
-            <div style={{flex:1,overflow:"auto"}}>
-              <ProgramEditor user={mu} program={programs[mu.id]}
-                onSave={p=>{onUpdateProgram(mu.id,p);setManagingUser(null);}}
-                onBack={()=>setManagingUser(null)}/>
-            </div>
+            )}
+
+            {/* Progress */}
+            {mv==="progress" && (
+              <div style={{flex:1,overflow:"auto"}}>
+                <ProgressScreen user={mu} program={programs[mu.id]}
+                  history={history[mu.id]||{}} goals={goals[mu.id]||{}}
+                  onUpdateGoals={g=>onUpdateGoals(mu.id,g)}
+                  onUpdateUser={onUpdateUser}
+                  onBack={()=>setManagingUser(null)}/>
+              </div>
+            )}
+
+            {/* Edit Sessions */}
+            {mv==="sessions" && (()=>{
+              const userHistory = history[mu.id]||{};
+              const sortedSessions = Object.entries(userHistory).sort(([a],[b])=>b.localeCompare(a));
+              return (
+                <>
+                  {header("EDIT SESSIONS · "+sortedSessions.length+" SESSIONS")}
+                  <div style={{flex:1,overflow:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:10}}>
+                    {sortedSessions.length===0&&(
+                      <div style={{color:"#2a2a2a",textAlign:"center",padding:60,fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>NO SESSIONS YET</div>
+                    )}
+                    {sortedSessions.map(([date,sess])=>{
+                      const ts=Object.values(sess.namedLog||{}).flat().filter(Boolean).length;
+                      const exNames=Object.keys(sess.namedLog||{});
+                      return (
+                        <div key={date} style={{background:"#0d0d0d",border:"2px solid #1a1a1a",
+                          borderRadius:16,overflow:"hidden"}}>
+                          <div style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",letterSpacing:2,lineHeight:1}}>{sess.day}</div>
+                              <div style={{color:"#444",fontSize:12,marginTop:2}}>
+                                {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
+                                {" · "}{ts} sets · {exNames.length} exercises
+                              </div>
+                              {sess.durationMin&&<div style={{color:"#333",fontSize:11,marginTop:1}}>
+                                {sess.durationMin}m {sess.calories?`· 🔥${sess.calories} kcal`:""} {sess.avgRpe?`· RPE ${sess.avgRpe}`:""}
+                              </div>}
+                              {sess.notes&&<div style={{marginTop:4,color:"#383838",fontSize:11,
+                                fontStyle:"italic",lineHeight:1.4}}>"{sess.notes}"</div>}
+                            </div>
+                            <button onClick={()=>{
+                              const nh={...userHistory};
+                              delete nh[date];
+                              onUpdateHistory(mu.id,nh);
+                            }} style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.25)",
+                              borderRadius:9,color:"#FF6060",padding:"8px 12px",cursor:"pointer",fontSize:14}}>🗑</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         );
       })()}
@@ -2603,7 +2681,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:C,letterSpacing:2,lineHeight:1}}>{user.name}</div>
           <div style={{color:"#444",fontSize:11,letterSpacing:2}}>{program?.name}</div>
         </div>
-        <LeaveBtn color={C} onLeave={handleLeave} userName={user.name} />
+        <LeaveBtn color={C} onLeave={onLeave} userName={user.name} />
       </div>
       <div style={{padding:"16px",flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
         <div style={{color:"#333",fontSize:10,letterSpacing:3,marginBottom:2,fontFamily:"'Barlow Condensed',sans-serif"}}>SELECT TODAY'S WORKOUT</div>
@@ -2845,7 +2923,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
             onClick={()=>{setPhase("active");setSessionStats(null);}} />
           <Btn full label="NEW WORKOUT" icon="↩" bg={C} color="#000"
             onClick={()=>{setPhase("pick");setSelDay(null);setLogged({});setExerciseNotes({});setSessionStats(null);setSessionNotes("");sessionKeyRef.current=null;setIsFreestyle(false);setSavedAsProgram(false);setFreestyleName("");}} />
-          <Btn full label="LEAVE SESSION" icon="✓" bg="transparent" color="#555" border="#2a2a2a" onClick={handleLeave} />
+          <Btn full label="LEAVE SESSION" icon="✓" bg="transparent" color="#555" border="#2a2a2a" onClick={onLeave} />
         </div>
       </div>
     );
@@ -6038,8 +6116,11 @@ function App() {
 
   if(screen==="session") return (
     <><SessionScreen activeIds={activeIds} users={users} programs={programs}
-      history={history} onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram}
-      onUpdateProgram={updateProgram}
+      history={history} goals={goals}
+      onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram}
+      onUpdateProgram={updateProgram} onUpdateUser={updateUser}
+      onUpdateGoals={updateGoals}
+      onUpdateHistory={(uid,h)=>saveHistory({...history,[uid]:h})}
       onBack={()=>setScreen("home")}/><BackupOverlay/></>
   );
   if(screen==="manage") return (
