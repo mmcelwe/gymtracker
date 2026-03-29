@@ -16,6 +16,7 @@
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+    input,textarea,select{caret-color:#fff !important}
     body{margin:0;overflow-x:hidden;background:#080808}
     #root{min-height:100vh}
   </style>
@@ -1098,8 +1099,53 @@ async function importBackupCsv(file) {
   });
 }
 
-async function sGet(k) { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch { return null; } }
-async function sSet(k,v) { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} }
+// ─── Storage with Google Sheets Sync ─────────────────────────────────────────
+const SYNC_URL = "https://script.google.com/macros/s/AKfycbwiPH3oo9QSS2nYaWCgWKX55Csr9Hy9Fir68DOYF_F7fp3ObBV5VZ3Z2tEbxKFLee9e/exec";
+
+// Write to localStorage immediately, then push to Google Sheets in background
+async function sSet(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+  // Background sync — don't await, don't block the UI
+  syncToSheet(k, JSON.stringify(v));
+}
+
+// Read from localStorage (fast, offline-first)
+async function sGet(k) {
+  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+
+// Push a single key to Google Sheets
+function syncToSheet(key, value) {
+  try {
+    fetch(SYNC_URL, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ key, value })
+    }).catch(() => {}); // silently fail if offline
+  } catch {}
+}
+
+// Pull all data from Google Sheets (used on startup for cross-device sync)
+async function syncFromSheet() {
+  try {
+    const resp = await fetch(SYNC_URL + "?t=" + Date.now(), { redirect: "follow" });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data;
+  } catch { return null; }
+}
+
+// Sync all 4 data keys to Google Sheets at once
+function syncAllToSheet() {
+  const keys = ["gft-users", "gft-programs", "gft-history", "gft-goals"];
+  keys.forEach(k => {
+    try {
+      const v = localStorage.getItem(k);
+      if (v) syncToSheet(k, v);
+    } catch {}
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PRIMITIVES
@@ -1257,8 +1303,8 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
   }
 
   const padKeyStyle = (k) => ({
-    height: 64, borderRadius: 14,
-    fontSize: k==="⌫"?22:k==="C"?17:26,
+    height: 72, borderRadius: 14,
+    fontSize: k==="⌫"?26:k==="C"?20:30,
     fontFamily: k==="C"?"'Barlow Condensed',sans-serif":"'Bebas Neue',sans-serif",
     fontWeight: 700,
     background: k==="C"?"#2a0a0a":k==="⌫"?"#1a1a1a":"#1e1e1e",
@@ -1272,12 +1318,12 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
     const isSpecial = ["⇧","⌫","#+=","123","ABC","SPACE","RETURN","PAD"].includes(k);
     const isActive = (k==="⇧" && caps) || (k==="PAD" && mode==="pad");
     return {
-      minWidth: k==="SPACE"?"100%":k==="RETURN"||k==="PAD"?56:k==="⌫"||k==="⇧"?56:38,
-      height: 50, borderRadius: 10,
+      minWidth: k==="SPACE"?"100%":k==="RETURN"||k==="PAD"?62:k==="⌫"||k==="⇧"?62:42,
+      height: 56, borderRadius: 12,
       background: isActive ? color : isSpecial ? "#2a2a2a" : "#1e1e1e",
       border: `1px solid ${isActive ? color : "#333"}`,
       color: isActive ? "#000" : isSpecial ? "#aaa" : "#f0f0f0",
-      fontSize: k==="⌫"?20:k==="⇧"||k==="PAD"?18:18,
+      fontSize: k==="⌫"?24:k==="⇧"||k==="PAD"?22:22,
       fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
       cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
       flexShrink: 0, userSelect:"none", transition:"background 0.08s",
@@ -1290,7 +1336,7 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}
       onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
-        padding:"12px 10px 20px", maxHeight:"92vh", display:"flex", flexDirection:"column"}}>
+        padding:"14px 12px 24px", maxHeight:"94vh", display:"flex", flexDirection:"column"}}>
 
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,padding:"0 4px",flexShrink:0}}>
@@ -1318,51 +1364,51 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
               {pad_rows.map((row,ri)=>(
                 <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
                   {row.map(k=>(
-                    <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}} style={{...padKeyStyle(k),height:56}}>{k}</button>
+                    <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}} style={{...padKeyStyle(k),height:64}}>{k}</button>
                   ))}
                 </div>
               ))}
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6,width:66}}>
+            <div style={{display:"flex",flexDirection:"column",gap:6,width:72}}>
               <button onPointerDown={e=>{e.preventDefault();setMode("alpha");}}
-                style={{height:56,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:14,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
+                  color:"#ccc",fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>ABC</button>
               <button onPointerDown={e=>{e.preventDefault();setMode("sym");}}
-                style={{height:56,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
+                  color:"#ccc",fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>!#&</button>
               <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
                 style={{flex:1,borderRadius:12,background:color,border:"none",color:"#000",
-                  fontSize:16,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,
+                  fontSize:18,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>DONE</button>
             </div>
           </div>
         ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {rows.map((row,ri)=>(
-              <div key={ri} style={{display:"flex",gap:4,justifyContent:"center"}}>
+              <div key={ri} style={{display:"flex",gap:5,justifyContent:"center"}}>
                 {row.map(k=>(
                   <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}}
-                    style={{...keyStyle(k),height:44,minWidth:k==="⌫"||k==="⇧"?50:34}}>
+                    style={{...keyStyle(k),height:52,minWidth:k==="⌫"||k==="⇧"?56:0,flex:k==="⌫"||k==="⇧"?"0 0 56px":"1 1 0"}}>
                     {k==="⇧"?"⇧":k==="⌫"?"⌫":k==="#+="?"#+=":caps||shifted?k.toUpperCase():k}
                   </button>
                 ))}
               </div>
             ))}
             {/* Bottom row — always visible */}
-            <div style={{display:"flex",gap:4,width:"100%",marginTop:2}}>
+            <div style={{display:"flex",gap:5,width:"100%",marginTop:2}}>
               <button onPointerDown={e=>{e.preventDefault();press(mode==="sym"?"ABC":"123");}}
-                style={{...keyStyle("123"),height:44,width:52,minWidth:0,flex:"0 0 52px",fontSize:13}}>{mode==="sym"?"ABC":"123"}</button>
+                style={{...keyStyle("123"),height:52,width:56,minWidth:0,flex:"0 0 56px",fontSize:15}}>{mode==="sym"?"ABC":"123"}</button>
               <button onPointerDown={e=>{e.preventDefault();setMode("pad");}}
-                style={{...keyStyle("PAD"),height:44,width:44,minWidth:0,flex:"0 0 44px",fontSize:18,
+                style={{...keyStyle("PAD"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:20,
                   background:mode==="pad"?color:"#252525",color:mode==="pad"?"#000":"#aaa"}}>🔢</button>
               <button onPointerDown={e=>{e.preventDefault();press("SPACE");}}
-                style={{...keyStyle("SPACE"),height:44,flex:1,minWidth:0}}>SPACE</button>
+                style={{...keyStyle("SPACE"),height:52,flex:1,minWidth:0}}>SPACE</button>
               {multiline&&<button onPointerDown={e=>{e.preventDefault();press("RETURN");}}
-                style={{...keyStyle("RETURN"),height:44,width:44,minWidth:0,flex:"0 0 44px",fontSize:20}}>↵</button>}
+                style={{...keyStyle("RETURN"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:24}}>↵</button>}
               <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
-                style={{...keyStyle("DONE"),height:44,width:68,minWidth:0,flex:"0 0 68px",background:color,border:"none",color:"#000",fontSize:14}}>DONE</button>
+                style={{...keyStyle("DONE"),height:52,width:76,minWidth:0,flex:"0 0 76px",background:color,border:"none",color:"#000",fontSize:16,letterSpacing:1}}>DONE</button>
             </div>
           </div>
         )}
@@ -1376,38 +1422,71 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
 // ─── TouchTextInput — tap to open QWERTY keyboard ────────────────────────────
 function TouchTextInput({ value, onChange, color, label, placeholder="Tap to enter", multiline=false }) {
   const [showKb, setShowKb] = useState(false);
+  const [hwMode, setHwMode] = useState(false); // hardware keyboard mode — shows real input
   const isEmpty = !value || value.trim()==="";
-  const hiddenRef = useRef(null);
+  const inputRef = useRef(null);
+
+  function activateHwMode(){
+    setHwMode(true);
+    setTimeout(()=>inputRef.current?.focus(),50);
+  }
+
   return (
     <div>
       {label&&<div style={{color:"#555",fontSize:11,letterSpacing:3,marginBottom:6,
         fontFamily:"'Barlow Condensed',sans-serif"}}>{label}</div>}
-      {/* Hidden input for physical keyboard — captures typed text */}
-      <input ref={hiddenRef} type="text" value={value||""} onChange={e=>onChange(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-        style={{position:"absolute",left:"-9999px",opacity:0,width:0,height:0}}/>
       <div style={{position:"relative"}}>
-        <button onClick={()=>setShowKb(true)} style={{
-          width:"100%", minHeight: multiline ? 72 : 52, borderRadius:12, cursor:"pointer",
-          background:"#111", border:`2px solid ${color}44`,
-          padding:"12px 44px 12px 16px", textAlign:"left", display:"block",
-          fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
-          color: isEmpty ? "#333" : "#F0F0F0",
-          whiteSpace: multiline ? "pre-wrap" : "nowrap",
-          overflow:"hidden", textOverflow: multiline ? "clip" : "ellipsis",
-          transition:"border 0.15s",
-        }}
-        onPointerEnter={e=>e.currentTarget.style.borderColor=color}
-        onPointerLeave={e=>e.currentTarget.style.borderColor=`${color}44`}>
-          {isEmpty ? placeholder : value}
-        </button>
-        {/* Physical keyboard focus button */}
-        <button onClick={e=>{e.stopPropagation();hiddenRef.current?.focus();}} style={{
+        {hwMode ? (
+          /* Visible input for physical keyboard */
+          multiline ? (
+            <textarea ref={inputRef} value={value||""} placeholder={placeholder}
+              onChange={e=>onChange(e.target.value)}
+              onBlur={()=>setHwMode(false)}
+              style={{
+                width:"100%", minHeight:72, borderRadius:12, resize:"vertical",
+                background:"#111", border:`2px solid ${color}`,
+                padding:"12px 44px 12px 16px", textAlign:"left",
+                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+                color:"#F0F0F0", outline:"none", caretColor:"#fff",
+                boxSizing:"border-box",
+              }}/>
+          ) : (
+            <input ref={inputRef} type="text" value={value||""} placeholder={placeholder}
+              onChange={e=>onChange(e.target.value)}
+              onBlur={()=>setHwMode(false)}
+              onKeyDown={e=>{if(e.key==="Enter"){e.target.blur();}}}
+              style={{
+                width:"100%", height:52, borderRadius:12, boxSizing:"border-box",
+                background:"#111", border:`2px solid ${color}`,
+                padding:"12px 44px 12px 16px", textAlign:"left",
+                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+                color:"#F0F0F0", outline:"none", caretColor:"#fff",
+              }}/>
+          )
+        ) : (
+          /* Touch display — tap opens custom keyboard */
+          <button onClick={()=>setShowKb(true)} style={{
+            width:"100%", minHeight: multiline ? 72 : 52, borderRadius:12, cursor:"pointer",
+            background:"#111", border:`2px solid ${color}44`,
+            padding:"12px 44px 12px 16px", textAlign:"left", display:"block",
+            fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+            color: isEmpty ? "#333" : "#F0F0F0",
+            whiteSpace: multiline ? "pre-wrap" : "nowrap",
+            overflow:"hidden", textOverflow: multiline ? "clip" : "ellipsis",
+            transition:"border 0.15s",
+          }}
+          onPointerEnter={e=>e.currentTarget.style.borderColor=color}
+          onPointerLeave={e=>e.currentTarget.style.borderColor=`${color}44`}>
+            {isEmpty ? placeholder : value}
+          </button>
+        )}
+        {/* Physical keyboard toggle */}
+        <button onClick={e=>{e.stopPropagation();if(hwMode){setHwMode(false);}else{activateHwMode();}}} style={{
           position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
           width:32,height:32,borderRadius:8,cursor:"pointer",
-          background:`${color}18`,border:`1px solid ${color}33`,
-          color:color,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
-          flexShrink:0}} title="Focus for physical keyboard">⌨</button>
+          background:hwMode?color:`${color}18`,border:`1px solid ${color}33`,
+          color:hwMode?"#000":color,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
+          flexShrink:0,zIndex:2}} title="Toggle physical keyboard">⌨</button>
       </div>
       {showKb&&<Keyboard value={value} label={label||placeholder} color={color}
         multiline={multiline}
@@ -1728,7 +1807,10 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
         backgroundImage:"linear-gradient(rgba(255,255,255,0.011) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.011) 1px,transparent 1px)",
         backgroundSize:"80px 80px"}}/>
       <div style={{textAlign:"center",position:"relative"}}>
-        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,letterSpacing:8,color:"#2a2a2a",marginBottom:6}}>FAMILY GYM TRACKER</div>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,letterSpacing:8,color:"#2a2a2a",marginBottom:6}}>
+          FAMILY GYM TRACKER
+          <span style={{marginLeft:12,fontSize:10,letterSpacing:2,color:"#1a3a1a"}}>☁ SYNCED</span>
+        </div>
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:84,lineHeight:1,color:"#F0F0F0",letterSpacing:3}}>WHO'S<br/>TRAINING?</div>
         <div style={{
           marginTop:16, display:"inline-flex", alignItems:"center", gap:10,
@@ -1888,17 +1970,17 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
         )}
       </div>
 
-      {/* Columns */}
+      {/* Columns — always side-by-side, equal width */}
       <div style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        flex: 1, minHeight: 0, overflow: "clip"
+        display: "flex",
+        flex: 1, minHeight: 0, overflow: "hidden"
       }}>
         {active.map((u, i) => (
           <div key={u.id} style={{
             borderRight: (i < active.length - 1 || left.length > 0) ? "2px solid #1a1a1a" : "none",
             display: "flex", flexDirection: "column",
-            minHeight: 0, overflow: "clip", position: "relative"
+            minHeight: 0, overflow: "clip", position: "relative",
+            flex: `1 1 ${100/cols}%`, minWidth: 0,
           }}>
             <WorkoutPanel
               user={u} program={programs[u.id]}
@@ -1918,7 +2000,8 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
             <div key={u.id} style={{
               borderRight: i < left.length - 1 ? "2px solid #1a1a1a" : "none",
               display: "flex", flexDirection: "column",
-              minHeight: 0, background: "#0a0a0a", position: "relative"
+              minHeight: 0, background: "#0a0a0a", position: "relative",
+              flex: `1 1 ${100/cols}%`, minWidth: 0,
             }}>
               {/* Header */}
               <div style={{background:"#0d0d0d",borderBottom:`3px solid ${u.color}33`,padding:"14px 18px",
@@ -6008,10 +6091,42 @@ function App() {
   const BACKUP_INTERVAL = 5; // remind every N sessions
 
   useEffect(()=>{
-    Promise.all([sGet("gft-users"),sGet("gft-programs"),sGet("gft-history"),sGet("gft-goals")]).then(([u,p,h,g])=>{
-      if(u)setUsers(u); if(p)setPrograms(p); if(h)setHistory(h); if(g)setGoals(g);
+    async function loadData(){
+      // 1. Load from localStorage first (instant, works offline)
+      const [lu,lp,lh,lg] = await Promise.all([
+        sGet("gft-users"),sGet("gft-programs"),sGet("gft-history"),sGet("gft-goals")
+      ]);
+      if(lu)setUsers(lu); if(lp)setPrograms(lp); if(lh)setHistory(lh); if(lg)setGoals(lg);
       setLoaded(true);
-    });
+
+      // 2. Try to pull from Google Sheets in background (cross-device sync)
+      try {
+        const cloud = await syncFromSheet();
+        if(cloud && Object.keys(cloud).length > 0){
+          const cu = cloud["gft-users"] ? JSON.parse(cloud["gft-users"]) : null;
+          const cp = cloud["gft-programs"] ? JSON.parse(cloud["gft-programs"]) : null;
+          const ch = cloud["gft-history"] ? JSON.parse(cloud["gft-history"]) : null;
+          const cg = cloud["gft-goals"] ? JSON.parse(cloud["gft-goals"]) : null;
+
+          // Use cloud data if it has more history (more sessions = more recent)
+          const localSessionCount = Object.values(lh||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+          const cloudSessionCount = Object.values(ch||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+
+          if(cloudSessionCount > localSessionCount){
+            if(cu){setUsers(cu); try{localStorage.setItem("gft-users",JSON.stringify(cu));}catch{}}
+            if(cp){setPrograms(cp); try{localStorage.setItem("gft-programs",JSON.stringify(cp));}catch{}}
+            if(ch){setHistory(ch); try{localStorage.setItem("gft-history",JSON.stringify(ch));}catch{}}
+            if(cg){setGoals(cg); try{localStorage.setItem("gft-goals",JSON.stringify(cg));}catch{}}
+            console.log("Synced from cloud:", cloudSessionCount, "sessions (local had", localSessionCount+")");
+          } else if(localSessionCount > 0 && cloudSessionCount === 0){
+            // Local has data but cloud is empty — push local to cloud
+            syncAllToSheet();
+            console.log("Pushed local data to cloud:", localSessionCount, "sessions");
+          }
+        }
+      } catch(e){ console.log("Cloud sync skipped:", e.message); }
+    }
+    loadData();
   },[]);
 
   const saveUsers=async u=>{setUsers(u);await sSet("gft-users",u);};
