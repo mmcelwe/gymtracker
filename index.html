@@ -2203,22 +2203,22 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
 function LeaveBtn({ color, onLeave, userName }) {
   const [confirm, setConfirm] = useState(false);
   if (confirm) return (
-    <div style={{display:"flex",gap:6,alignItems:"center",
-      background:"#1a0a0a",border:"1px solid #FF444444",borderRadius:10,padding:"6px 10px"}}>
-      <span style={{color:"#888",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END?</span>
-      <button onClick={onLeave} style={{background:"#FF4444",border:"none",borderRadius:7,
-        color:"#fff",padding:"5px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
-        fontWeight:700,fontSize:12,letterSpacing:1}}>YES</button>
+    <div style={{display:"flex",gap:4,alignItems:"center",
+      background:"#1a0a0a",border:"1px solid #FF444444",borderRadius:8,padding:"4px 6px"}}>
+      <span style={{color:"#888",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END?</span>
+      <button onClick={onLeave} style={{background:"#FF4444",border:"none",borderRadius:6,
+        color:"#fff",padding:"4px 8px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
+        fontWeight:700,fontSize:10,letterSpacing:1}}>YES</button>
       <button onClick={()=>setConfirm(false)} style={{background:"none",border:"1px solid #333",
-        borderRadius:7,color:"#555",padding:"5px 10px",cursor:"pointer",fontSize:12}}>✕</button>
+        borderRadius:6,color:"#555",padding:"4px 6px",cursor:"pointer",fontSize:10}}>✕</button>
     </div>
   );
   return (
     <button onClick={()=>setConfirm(true)} style={{
-      background:"none", border:"1px solid #252525", borderRadius:8,
-      color:"#444", padding:"7px 13px", cursor:"pointer", fontSize:11,
-      fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:2,
-      transition:"all 0.15s",
+      background:"none", border:"1px solid #252525", borderRadius:7,
+      color:"#444", padding:"4px 8px", cursor:"pointer", fontSize:9,
+      fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1,
+      transition:"all 0.15s", flexShrink:0,
     }}
     onPointerEnter={e=>{e.currentTarget.style.borderColor="#FF4444";e.currentTarget.style.color="#FF6666";}}
     onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#444";}}>
@@ -2758,12 +2758,13 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   // ── Pick Day ─────────────────────────────────────────────────
   if(phase==="pick") return (
     <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#0a0a0a"}}>
-      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"14px 18px",
-        display:"flex",alignItems:"center",gap:14,flexShrink:0}}>
-        <Avatar user={user} size={44} />
-        <div style={{flex:1}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:C,letterSpacing:2,lineHeight:1}}>{user.name}</div>
-          <div style={{color:"#444",fontSize:11,letterSpacing:2}}>{program?.name}</div>
+      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"10px 14px",
+        display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+        <Avatar user={user} size={36} />
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C,letterSpacing:2,lineHeight:1,
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div>
+          <div style={{color:"#444",fontSize:10,letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{program?.name}</div>
         </div>
         <LeaveBtn color={C} onLeave={onLeave} userName={user.name} />
       </div>
@@ -3023,28 +3024,29 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       {timer && <InlineTimer key={timer.key} duration={timer.dur} color={C} onDone={skipToNext} onSkip={skipToNext}/>}
 
       {/* Header */}
-      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"10px 14px",
-        display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <Avatar user={user} size={36}/>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:C,letterSpacing:2,lineHeight:1}}>{user.name}</div>
-            <div style={{color:"#444",fontSize:10,letterSpacing:1}}>{isFreestyle?"⚡ ":""}{selDay.label} · {doneCount}/{exercises.length}</div>
+      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"8px 10px",
+        display:"flex",alignItems:"center",gap:8,flexShrink:0,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0,flex:"1 1 auto"}}>
+          <Avatar user={user} size={32}/>
+          <div style={{minWidth:0}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:C,letterSpacing:2,lineHeight:1,
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div>
+            <div style={{color:"#444",fontSize:9,letterSpacing:1}}>{isFreestyle?"⚡ ":""}{selDay.label} · {doneCount}/{exercises.length}</div>
           </div>
         </div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
           {/* Session mode toggle */}
-          <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:"1px solid #252525",flexShrink:0}}>
-            {[["traditional","TRAD"],["circuit","CIRCUIT"]].map(([val,label])=>{
+          <div style={{display:"flex",gap:0,borderRadius:7,overflow:"hidden",border:"1px solid #252525",flexShrink:0}}>
+            {[["traditional","TRAD"],["circuit","CIRC"]].map(([val,label])=>{
               const on = sessionMode===val;
               return (
                 <button key={val} onClick={()=>setSessionMode(val)} style={{
-                  padding:"5px 8px", cursor:"pointer", border:"none",
+                  padding:"4px 6px", cursor:"pointer", border:"none",
                   background: on ? C : "#141414",
                   color: on ? "#000" : "#555",
                   fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700,
-                  fontSize:10, letterSpacing:1, transition:"all 0.12s",
-                  minWidth:42}}>
+                  fontSize:9, letterSpacing:1, transition:"all 0.12s",
+                  minWidth:36}}>
                   {label}
                 </button>
               );
@@ -3052,8 +3054,8 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           </div>
           <UnitToggle useKg={useKg} onChange={setUseKg} color={C}/>
           <button onClick={()=>setPhase("pick")} style={{background:"none",border:"1px solid #252525",
-            borderRadius:8,color:"#444",padding:"6px 11px",cursor:"pointer",fontSize:10,
-            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2}}>← DAYS</button>
+            borderRadius:7,color:"#444",padding:"4px 8px",cursor:"pointer",fontSize:9,
+            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>← DAYS</button>
           <LeaveBtn color={C} onLeave={handleLeave} userName={user.name}/>
         </div>
       </div>
@@ -3970,7 +3972,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
               bg="rgba(255,255,255,0.05)" color="#ddd" border="#2a2a2a"
               onClick={()=>fileRef.current?.click()}/>
           </div>
-          <input ref={fileRef} type="file" accept=".csv" onChange={handleFileSelect}
+          <input ref={fileRef} type="file" onChange={handleFileSelect}
             style={{display:"none"}}/>
           {importMsg&&(
             <div style={{marginTop:12,padding:"8px 14px",borderRadius:9,fontSize:13,
