@@ -2100,6 +2100,51 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
             {mv==="sessions" && (()=>{
               const userHistory = history[mu.id]||{};
               const sortedSessions = Object.entries(userHistory).sort(([a],[b])=>b.localeCompare(a));
+              const [expandedSess, setExpandedSess] = useState(null);
+              const [addingExTo, setAddingExTo] = useState(null); // session key
+
+              function updateSession(date, patch){
+                const nh = {...userHistory, [date]: {...userHistory[date], ...patch}};
+                onUpdateHistory(mu.id, nh);
+              }
+              function updateNamedLog(date, newLog){
+                updateSession(date, {namedLog: newLog});
+              }
+              function addSetToEx(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                if(!log[exName]) log[exName]=[];
+                log[exName] = [...log[exName], {weight:"0",reps:"0",rpe:0}];
+                updateNamedLog(date, log);
+              }
+              function updateSet(date, exName, setIdx, patch){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                log[exName] = (log[exName]||[]).map((s,i)=>i===setIdx?{...s,...patch}:s);
+                updateNamedLog(date, log);
+              }
+              function deleteSet(date, exName, setIdx){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                log[exName] = (log[exName]||[]).filter((_,i)=>i!==setIdx);
+                if(log[exName].length===0) delete log[exName];
+                updateNamedLog(date, log);
+              }
+              function addExToSession(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                if(log[exName]) return; // already exists
+                log[exName] = [{weight:"0",reps:"0",rpe:0}];
+                updateNamedLog(date, log);
+                setAddingExTo(null);
+              }
+              function deleteExFromSession(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                delete log[exName];
+                updateNamedLog(date, log);
+              }
+
               return (
                 <>
                   {header("EDIT SESSIONS · "+sortedSessions.length+" SESSIONS")}
@@ -2110,29 +2155,107 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
                     {sortedSessions.map(([date,sess])=>{
                       const ts=Object.values(sess.namedLog||{}).flat().filter(Boolean).length;
                       const exNames=Object.keys(sess.namedLog||{});
+                      const isExpanded = expandedSess===date;
                       return (
-                        <div key={date} style={{background:"#0d0d0d",border:"2px solid #1a1a1a",
+                        <div key={date} style={{background:"#0d0d0d",border:`2px solid ${isExpanded?mu.color+"44":"#1a1a1a"}`,
                           borderRadius:16,overflow:"hidden"}}>
-                          <div style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14}}>
+                          {/* Session header — tap to expand */}
+                          <div onClick={()=>setExpandedSess(isExpanded?null:date)}
+                            style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer"}}>
                             <div style={{flex:1}}>
                               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",letterSpacing:2,lineHeight:1}}>{sess.day}</div>
                               <div style={{color:"#444",fontSize:12,marginTop:2}}>
                                 {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
                                 {" · "}{ts} sets · {exNames.length} exercises
                               </div>
-                              {sess.durationMin&&<div style={{color:"#333",fontSize:11,marginTop:1}}>
-                                {sess.durationMin}m {sess.calories?`· 🔥${sess.calories} kcal`:""} {sess.avgRpe?`· RPE ${sess.avgRpe}`:""}
-                              </div>}
-                              {sess.notes&&<div style={{marginTop:4,color:"#383838",fontSize:11,
-                                fontStyle:"italic",lineHeight:1.4}}>"{sess.notes}"</div>}
                             </div>
-                            <button onClick={()=>{
-                              const nh={...userHistory};
-                              delete nh[date];
-                              onUpdateHistory(mu.id,nh);
+                            <div style={{color:"#333",fontSize:16}}>{isExpanded?"▼":"▶"}</div>
+                            <button onClick={e=>{e.stopPropagation();
+                              const nh={...userHistory};delete nh[date];onUpdateHistory(mu.id,nh);
                             }} style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.25)",
                               borderRadius:9,color:"#FF6060",padding:"8px 12px",cursor:"pointer",fontSize:14}}>🗑</button>
                           </div>
+
+                          {/* Expanded: exercise and set editor */}
+                          {isExpanded&&(
+                            <div style={{borderTop:`1px solid #1e1e1e`,padding:"14px 18px",display:"flex",flexDirection:"column",gap:12}}>
+                              {exNames.map(exName=>{
+                                const sets = (sess.namedLog[exName]||[]).filter(Boolean);
+                                return (
+                                  <div key={exName} style={{background:"#111",borderRadius:12,border:"1px solid #1e1e1e",overflow:"hidden"}}>
+                                    {/* Exercise header */}
+                                    <div style={{padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",
+                                      borderBottom:"1px solid #1a1a1a"}}>
+                                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:mu.color,letterSpacing:2}}>{exName}</div>
+                                      <div style={{display:"flex",gap:6}}>
+                                        <button onClick={()=>addSetToEx(date,exName)}
+                                          style={{background:`${mu.color}18`,border:`1px solid ${mu.color}44`,borderRadius:7,
+                                            color:mu.color,padding:"4px 10px",cursor:"pointer",fontSize:10,
+                                            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>+ SET</button>
+                                        <button onClick={()=>deleteExFromSession(date,exName)}
+                                          style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.2)",
+                                            borderRadius:7,color:"#FF6060",padding:"4px 8px",cursor:"pointer",fontSize:12}}>✕</button>
+                                      </div>
+                                    </div>
+                                    {/* Sets */}
+                                    <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:6}}>
+                                      {sets.map((s,si)=>(
+                                        <div key={si} style={{display:"flex",alignItems:"center",gap:8}}>
+                                          <div style={{color:"#333",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                                            letterSpacing:1,width:28,flexShrink:0}}>S{si+1}</div>
+                                          <div style={{display:"flex",gap:4,flex:1,alignItems:"center"}}>
+                                            <input type="number" value={s.weight||""} placeholder="0"
+                                              onChange={e=>updateSet(date,exName,si,{weight:e.target.value})}
+                                              style={{width:60,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                            <span style={{color:"#333",fontSize:10}}>kg ×</span>
+                                            <input type="number" value={s.reps||""} placeholder="0"
+                                              onChange={e=>updateSet(date,exName,si,{reps:e.target.value})}
+                                              style={{width:50,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                            <span style={{color:"#333",fontSize:10}}>reps</span>
+                                            <span style={{color:"#333",fontSize:10,marginLeft:4}}>RPE</span>
+                                            <input type="number" value={s.rpe||""} placeholder="—" min="1" max="10"
+                                              onChange={e=>updateSet(date,exName,si,{rpe:parseFloat(e.target.value)||0})}
+                                              style={{width:40,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 6px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                          </div>
+                                          <button onClick={()=>deleteSet(date,exName,si)}
+                                            style={{background:"none",border:"1px solid #2a1a1a",borderRadius:6,
+                                              color:"#884444",padding:"4px 6px",cursor:"pointer",fontSize:10,flexShrink:0}}>✕</button>
+                                        </div>
+                                      ))}
+                                      {sets.length===0&&(
+                                        <div style={{color:"#2a2a2a",fontSize:11,textAlign:"center",padding:8}}>No sets — tap + SET to add</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {/* Add exercise to session */}
+                              {addingExTo===date ? (
+                                <div style={{background:"#111",borderRadius:12,border:`1px solid ${mu.color}44`,padding:12}}>
+                                  <div style={{color:"#555",fontSize:10,letterSpacing:2,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>ADD EXERCISE</div>
+                                  <TouchTextInput value="" onChange={name=>{if(name.trim())addExToSession(date,name.trim());}}
+                                    placeholder="Type exercise name + Done" color={mu.color}/>
+                                  <button onClick={()=>setAddingExTo(null)} style={{background:"none",border:"none",
+                                    color:"#444",cursor:"pointer",fontSize:11,marginTop:6,
+                                    fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CANCEL</button>
+                                </div>
+                              ) : (
+                                <button onClick={()=>setAddingExTo(date)}
+                                  style={{background:"none",border:`1px dashed ${mu.color}33`,borderRadius:10,
+                                    color:`${mu.color}66`,padding:"10px",cursor:"pointer",fontSize:11,
+                                    fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2}}>
+                                  + ADD EXERCISE TO SESSION
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -2329,6 +2452,59 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const [freestyleName,setFreestyleName]=useState("");
   const [showSmartModal,setShowSmartModal]=useState(false);
   const C=user.color;
+  const RECOVERY_KEY = `gft-active-${user.id}`;
+
+  // Auto-save active session state for crash recovery
+  useEffect(()=>{
+    if(phase==="active" && selDay && exercises.length>0){
+      try{
+        localStorage.setItem(RECOVERY_KEY, JSON.stringify({
+          selDay, exercises, logged, exerciseNotes, sessionNotes,
+          currentExId, setIdx, sessionMode, isFreestyle, freestyleName,
+          startTime, sessionKey: sessionKeyRef.current,
+          savedAt: Date.now()
+        }));
+      }catch{}
+    }
+    if(phase==="done" || phase==="pick"){
+      try{ localStorage.removeItem(RECOVERY_KEY); }catch{}
+    }
+  },[phase, logged, exercises, exerciseNotes, sessionNotes, currentExId]);
+
+  // Check for recoverable session on mount
+  const [recoveryData, setRecoveryData] = useState(()=>{
+    try{
+      const raw = localStorage.getItem(RECOVERY_KEY);
+      if(raw){
+        const d = JSON.parse(raw);
+        if(d.savedAt && Date.now() - d.savedAt < 12*60*60*1000) return d;
+        localStorage.removeItem(RECOVERY_KEY);
+      }
+    }catch{}
+    return null;
+  });
+
+  function restoreSession(data){
+    setSelDay(data.selDay);
+    setExercises(data.exercises);
+    setLogged(data.logged||{});
+    setExerciseNotes(data.exerciseNotes||{});
+    setSessionNotes(data.sessionNotes||"");
+    setCurrentExId(data.currentExId);
+    setSetIdx(data.setIdx||0);
+    setSessionMode(data.sessionMode||"traditional");
+    setIsFreestyle(data.isFreestyle||false);
+    setFreestyleName(data.freestyleName||"");
+    setStartTime(data.startTime||Date.now());
+    sessionKeyRef.current = data.sessionKey||null;
+    setPhase("active");
+    setRecoveryData(null);
+  }
+
+  function dismissRecovery(){
+    try{ localStorage.removeItem(RECOVERY_KEY); }catch{}
+    setRecoveryData(null);
+  }
 
   // Get the last full session for a given day label
   function getLastSession(dayLabel) {
@@ -2468,6 +2644,58 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setSetIdx(0);
     setStartTime(Date.now());
     sessionKeyRef.current=null;
+    setSessionMode(day.defaultMode||"traditional");
+    setIsFreestyle(false);
+    setSavedAsProgram(false);
+    setFreestyleName("");
+    setPhase("active");
+  }
+
+  function reopenTodaySession(day){
+    // Find today's completed session for this day label
+    const todayIso = new Date().toISOString().split("T")[0];
+    const entry = Object.entries(history)
+      .filter(([key,sess])=>{
+        if(!sess || sess.day!==day.label) return false;
+        const sessDate = sess.date || dateOf(key);
+        return sessDate === todayIso;
+      })
+      .sort(([a],[b])=>b.localeCompare(a))[0]; // most recent if multiple
+    if(!entry) return startDay(day); // fallback to fresh start
+
+    const [sessKey, sess] = entry;
+    const namedLog = sess.namedLog || {};
+
+    // Rebuild exercises from the program day, preserving order
+    // Add any exercises from namedLog that aren't in the program (added mid-session)
+    const programExNames = day.exercises.map(e=>e.name);
+    const exCopy = day.exercises.map(e=>({...e}));
+    Object.keys(namedLog).forEach(name=>{
+      if(!programExNames.includes(name)){
+        exCopy.push({id:mkId(),name,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}});
+      }
+    });
+
+    // Rebuild logged sets from namedLog, keyed by exercise id
+    const logMap = {};
+    exCopy.forEach(ex=>{
+      const sets = namedLog[ex.name];
+      if(sets && sets.length > 0){
+        logMap[ex.id] = sets.map(s=>({
+          weight: s.weight, reps: s.reps, rpe: s.rpe||0
+        }));
+      }
+    });
+
+    setSelDay(day);
+    setExercises(exCopy);
+    setLogged(logMap);
+    setExerciseNotes(sess.exerciseNotes||{});
+    setSessionNotes(sess.notes||"");
+    setCurrentExId(exCopy[0]?.id||null);
+    setSetIdx(0);
+    setStartTime(Date.now());
+    sessionKeyRef.current = sessKey; // reuse the same key so finish overwrites
     setSessionMode(day.defaultMode||"traditional");
     setIsFreestyle(false);
     setSavedAsProgram(false);
@@ -2794,6 +3022,26 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         <LeaveBtn color={C} onLeave={onLeave} userName={user.name} />
       </div>
       <div style={{padding:"16px",flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
+        {/* Crash recovery card */}
+        {recoveryData&&(
+          <div style={{background:"#1a1a0a",border:`2px solid ${C}55`,borderRadius:14,
+            padding:"16px 18px",marginBottom:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <span style={{fontSize:22}}>⚠️</span>
+              <div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C,letterSpacing:2,lineHeight:1}}>UNFINISHED SESSION</div>
+                <div style={{color:"#888",fontSize:11,marginTop:2}}>
+                  {recoveryData.selDay?.label} · {Object.values(recoveryData.logged||{}).reduce((a,s)=>a+(s?.filter(Boolean).length||0),0)} sets logged
+                  {recoveryData.savedAt&&<span> · {Math.round((Date.now()-recoveryData.savedAt)/60000)}m ago</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <Btn label="↩ RESUME" bg={C} color="#000" onClick={()=>restoreSession(recoveryData)}/>
+              <Btn label="✕ DISCARD" bg="transparent" color="#555" border="#333" onClick={dismissRecovery}/>
+            </div>
+          </div>
+        )}
         <div style={{color:"#333",fontSize:10,letterSpacing:3,marginBottom:2,fontFamily:"'Barlow Condensed',sans-serif"}}>SELECT TODAY'S WORKOUT</div>
         {program?.days?.map(d=>{
           const isFreq = d.scheduleType==="frequency";
@@ -2805,7 +3053,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           const lastSess = getLastSession(d.label);
           const doneToday = isDoneToday(d.label);
           return (
-            <div key={d.id} style={{display:"flex",flexDirection:"column",gap:0,opacity:doneToday?0.45:1}}>
+            <div key={d.id} style={{display:"flex",flexDirection:"column",gap:0}}>
             <TouchCard color={C} highlight={!doneToday&&(isToday||(isFreq&&remaining>0))} onClick={()=>{if(!doneToday)startDay(d);}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div style={{flex:1}}>
@@ -2845,6 +3093,25 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                 </div>
               )}
             </TouchCard>
+            {/* Reopen today's session */}
+            {doneToday&&(
+              <div style={{display:"flex",gap:0,borderRadius:"0 0 16px 16px",overflow:"hidden",border:`1px solid #1e1e1e`,borderTop:"none"}}>
+                <button onClick={e=>{e.stopPropagation();reopenTodaySession(d);}}
+                  style={{flex:1,background:"#0d0d0d",border:"none",padding:"10px 16px",cursor:"pointer",
+                    display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13}}>📝</span>
+                  <span style={{color:"#666",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:1}}>EDIT / CONTINUE SESSION</span>
+                </button>
+                <button onClick={e=>{e.stopPropagation();startDay(d);}}
+                  style={{background:"#0d0d0d",border:"none",borderLeft:"1px solid #1e1e1e",
+                    padding:"10px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:11}}>➕</span>
+                  <span style={{color:"#444",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:1}}>NEW</span>
+                </button>
+              </div>
+            )}
             {/* Repeat last workout button */}
             {lastSess&&!doneToday&&(
               <button onClick={e=>{e.stopPropagation();repeatLastSession(d);}}
