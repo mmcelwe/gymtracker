@@ -16,6 +16,7 @@
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+    input,textarea,select{caret-color:#fff !important}
     body{margin:0;overflow-x:hidden;background:#080808}
     #root{min-height:100vh}
   </style>
@@ -1098,8 +1099,53 @@ async function importBackupCsv(file) {
   });
 }
 
-async function sGet(k) { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch { return null; } }
-async function sSet(k,v) { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} }
+// ─── Storage with Google Sheets Sync ─────────────────────────────────────────
+const SYNC_URL = "https://script.google.com/macros/s/AKfycbwiPH3oo9QSS2nYaWCgWKX55Csr9Hy9Fir68DOYF_F7fp3ObBV5VZ3Z2tEbxKFLee9e/exec";
+
+// Write to localStorage immediately, then push to Google Sheets in background
+async function sSet(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+  // Background sync — don't await, don't block the UI
+  syncToSheet(k, JSON.stringify(v));
+}
+
+// Read from localStorage (fast, offline-first)
+async function sGet(k) {
+  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+
+// Push a single key to Google Sheets
+function syncToSheet(key, value) {
+  try {
+    fetch(SYNC_URL, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ key, value })
+    }).catch(() => {}); // silently fail if offline
+  } catch {}
+}
+
+// Pull all data from Google Sheets (used on startup for cross-device sync)
+async function syncFromSheet() {
+  try {
+    const resp = await fetch(SYNC_URL + "?t=" + Date.now(), { redirect: "follow" });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data;
+  } catch { return null; }
+}
+
+// Sync all 4 data keys to Google Sheets at once
+function syncAllToSheet() {
+  const keys = ["gft-users", "gft-programs", "gft-history", "gft-goals"];
+  keys.forEach(k => {
+    try {
+      const v = localStorage.getItem(k);
+      if (v) syncToSheet(k, v);
+    } catch {}
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PRIMITIVES
@@ -1257,8 +1303,8 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
   }
 
   const padKeyStyle = (k) => ({
-    height: 64, borderRadius: 14,
-    fontSize: k==="⌫"?22:k==="C"?17:26,
+    height: 72, borderRadius: 14,
+    fontSize: k==="⌫"?26:k==="C"?20:30,
     fontFamily: k==="C"?"'Barlow Condensed',sans-serif":"'Bebas Neue',sans-serif",
     fontWeight: 700,
     background: k==="C"?"#2a0a0a":k==="⌫"?"#1a1a1a":"#1e1e1e",
@@ -1272,12 +1318,12 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
     const isSpecial = ["⇧","⌫","#+=","123","ABC","SPACE","RETURN","PAD"].includes(k);
     const isActive = (k==="⇧" && caps) || (k==="PAD" && mode==="pad");
     return {
-      minWidth: k==="SPACE"?"100%":k==="RETURN"||k==="PAD"?56:k==="⌫"||k==="⇧"?56:38,
-      height: 50, borderRadius: 10,
+      minWidth: k==="SPACE"?"100%":k==="RETURN"||k==="PAD"?62:k==="⌫"||k==="⇧"?62:42,
+      height: 56, borderRadius: 12,
       background: isActive ? color : isSpecial ? "#2a2a2a" : "#1e1e1e",
       border: `1px solid ${isActive ? color : "#333"}`,
       color: isActive ? "#000" : isSpecial ? "#aaa" : "#f0f0f0",
-      fontSize: k==="⌫"?20:k==="⇧"||k==="PAD"?18:18,
+      fontSize: k==="⌫"?24:k==="⇧"||k==="PAD"?22:22,
       fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
       cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
       flexShrink: 0, userSelect:"none", transition:"background 0.08s",
@@ -1286,11 +1332,11 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
 
   const rows = mode==="sym" ? rows_sym : rows_alpha;
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}
       onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
-        padding:"12px 10px 20px", maxHeight:"92vh", display:"flex", flexDirection:"column"}}>
+        padding:"14px 12px 24px", maxHeight:"94vh", display:"flex", flexDirection:"column"}}>
 
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,padding:"0 4px",flexShrink:0}}>
@@ -1318,95 +1364,129 @@ function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) 
               {pad_rows.map((row,ri)=>(
                 <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
                   {row.map(k=>(
-                    <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}} style={{...padKeyStyle(k),height:56}}>{k}</button>
+                    <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}} style={{...padKeyStyle(k),height:64}}>{k}</button>
                   ))}
                 </div>
               ))}
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6,width:66}}>
+            <div style={{display:"flex",flexDirection:"column",gap:6,width:72}}>
               <button onPointerDown={e=>{e.preventDefault();setMode("alpha");}}
-                style={{height:56,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:14,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
+                  color:"#ccc",fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>ABC</button>
               <button onPointerDown={e=>{e.preventDefault();setMode("sym");}}
-                style={{height:56,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
+                  color:"#ccc",fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>!#&</button>
               <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
                 style={{flex:1,borderRadius:12,background:color,border:"none",color:"#000",
-                  fontSize:16,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,
+                  fontSize:18,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,
                   cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>DONE</button>
             </div>
           </div>
         ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {rows.map((row,ri)=>(
-              <div key={ri} style={{display:"flex",gap:4,justifyContent:"center"}}>
+              <div key={ri} style={{display:"flex",gap:5,justifyContent:"center"}}>
                 {row.map(k=>(
                   <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}}
-                    style={{...keyStyle(k),height:44,minWidth:k==="⌫"||k==="⇧"?50:34}}>
+                    style={{...keyStyle(k),height:52,minWidth:k==="⌫"||k==="⇧"?56:0,flex:k==="⌫"||k==="⇧"?"0 0 56px":"1 1 0"}}>
                     {k==="⇧"?"⇧":k==="⌫"?"⌫":k==="#+="?"#+=":caps||shifted?k.toUpperCase():k}
                   </button>
                 ))}
               </div>
             ))}
             {/* Bottom row — always visible */}
-            <div style={{display:"flex",gap:4,width:"100%",marginTop:2}}>
+            <div style={{display:"flex",gap:5,width:"100%",marginTop:2}}>
               <button onPointerDown={e=>{e.preventDefault();press(mode==="sym"?"ABC":"123");}}
-                style={{...keyStyle("123"),height:44,width:52,minWidth:0,flex:"0 0 52px",fontSize:13}}>{mode==="sym"?"ABC":"123"}</button>
+                style={{...keyStyle("123"),height:52,width:56,minWidth:0,flex:"0 0 56px",fontSize:15}}>{mode==="sym"?"ABC":"123"}</button>
               <button onPointerDown={e=>{e.preventDefault();setMode("pad");}}
-                style={{...keyStyle("PAD"),height:44,width:44,minWidth:0,flex:"0 0 44px",fontSize:18,
+                style={{...keyStyle("PAD"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:20,
                   background:mode==="pad"?color:"#252525",color:mode==="pad"?"#000":"#aaa"}}>🔢</button>
               <button onPointerDown={e=>{e.preventDefault();press("SPACE");}}
-                style={{...keyStyle("SPACE"),height:44,flex:1,minWidth:0}}>SPACE</button>
+                style={{...keyStyle("SPACE"),height:52,flex:1,minWidth:0}}>SPACE</button>
               {multiline&&<button onPointerDown={e=>{e.preventDefault();press("RETURN");}}
-                style={{...keyStyle("RETURN"),height:44,width:44,minWidth:0,flex:"0 0 44px",fontSize:20}}>↵</button>}
+                style={{...keyStyle("RETURN"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:24}}>↵</button>}
               <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
-                style={{...keyStyle("DONE"),height:44,width:68,minWidth:0,flex:"0 0 68px",background:color,border:"none",color:"#000",fontSize:14}}>DONE</button>
+                style={{...keyStyle("DONE"),height:52,width:76,minWidth:0,flex:"0 0 76px",background:color,border:"none",color:"#000",fontSize:16,letterSpacing:1}}>DONE</button>
             </div>
           </div>
         )}
         </div>
       </div>
       <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
-    </div>
+    </div>,
+    document.body
   );
 }
 // ─── TouchTextInput — tap to open QWERTY keyboard ────────────────────────────
 function TouchTextInput({ value, onChange, color, label, placeholder="Tap to enter", multiline=false }) {
   const [showKb, setShowKb] = useState(false);
+  const [hwMode, setHwMode] = useState(false); // hardware keyboard mode — shows real input
   const isEmpty = !value || value.trim()==="";
-  const hiddenRef = useRef(null);
+  const inputRef = useRef(null);
+
+  function activateHwMode(){
+    setHwMode(true);
+    setTimeout(()=>inputRef.current?.focus(),50);
+  }
+
   return (
     <div>
       {label&&<div style={{color:"#555",fontSize:11,letterSpacing:3,marginBottom:6,
         fontFamily:"'Barlow Condensed',sans-serif"}}>{label}</div>}
-      {/* Hidden input for physical keyboard — captures typed text */}
-      <input ref={hiddenRef} type="text" value={value||""} onChange={e=>onChange(e.target.value)}
-        onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-        style={{position:"absolute",left:"-9999px",opacity:0,width:0,height:0}}/>
       <div style={{position:"relative"}}>
-        <button onClick={()=>setShowKb(true)} style={{
-          width:"100%", minHeight: multiline ? 72 : 52, borderRadius:12, cursor:"pointer",
-          background:"#111", border:`2px solid ${color}44`,
-          padding:"12px 44px 12px 16px", textAlign:"left", display:"block",
-          fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
-          color: isEmpty ? "#333" : "#F0F0F0",
-          whiteSpace: multiline ? "pre-wrap" : "nowrap",
-          overflow:"hidden", textOverflow: multiline ? "clip" : "ellipsis",
-          transition:"border 0.15s",
-        }}
-        onPointerEnter={e=>e.currentTarget.style.borderColor=color}
-        onPointerLeave={e=>e.currentTarget.style.borderColor=`${color}44`}>
-          {isEmpty ? placeholder : value}
-        </button>
-        {/* Physical keyboard focus button */}
-        <button onClick={e=>{e.stopPropagation();hiddenRef.current?.focus();}} style={{
+        {hwMode ? (
+          /* Visible input for physical keyboard */
+          multiline ? (
+            <textarea ref={inputRef} value={value||""} placeholder={placeholder}
+              onChange={e=>onChange(e.target.value)}
+              onBlur={()=>setHwMode(false)}
+              style={{
+                width:"100%", minHeight:72, borderRadius:12, resize:"vertical",
+                background:"#111", border:`2px solid ${color}`,
+                padding:"12px 44px 12px 16px", textAlign:"left",
+                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+                color:"#F0F0F0", outline:"none", caretColor:"#fff",
+                boxSizing:"border-box",
+              }}/>
+          ) : (
+            <input ref={inputRef} type="text" value={value||""} placeholder={placeholder}
+              onChange={e=>onChange(e.target.value)}
+              onBlur={()=>setHwMode(false)}
+              onKeyDown={e=>{if(e.key==="Enter"){e.target.blur();}}}
+              style={{
+                width:"100%", height:52, borderRadius:12, boxSizing:"border-box",
+                background:"#111", border:`2px solid ${color}`,
+                padding:"12px 44px 12px 16px", textAlign:"left",
+                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+                color:"#F0F0F0", outline:"none", caretColor:"#fff",
+              }}/>
+          )
+        ) : (
+          /* Touch display — tap opens custom keyboard */
+          <button onClick={()=>setShowKb(true)} style={{
+            width:"100%", minHeight: multiline ? 72 : 52, borderRadius:12, cursor:"pointer",
+            background:"#111", border:`2px solid ${color}44`,
+            padding:"12px 44px 12px 16px", textAlign:"left", display:"block",
+            fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+            color: isEmpty ? "#333" : "#F0F0F0",
+            whiteSpace: multiline ? "pre-wrap" : "nowrap",
+            overflow:"hidden", textOverflow: multiline ? "clip" : "ellipsis",
+            transition:"border 0.15s",
+          }}
+          onPointerEnter={e=>e.currentTarget.style.borderColor=color}
+          onPointerLeave={e=>e.currentTarget.style.borderColor=`${color}44`}>
+            {isEmpty ? placeholder : value}
+          </button>
+        )}
+        {/* Physical keyboard toggle */}
+        <button onClick={e=>{e.stopPropagation();if(hwMode){setHwMode(false);}else{activateHwMode();}}} style={{
           position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
           width:32,height:32,borderRadius:8,cursor:"pointer",
-          background:`${color}18`,border:`1px solid ${color}33`,
-          color:color,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
-          flexShrink:0}} title="Focus for physical keyboard">⌨</button>
+          background:hwMode?color:`${color}18`,border:`1px solid ${color}33`,
+          color:hwMode?"#000":color,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
+          flexShrink:0,zIndex:2}} title="Toggle physical keyboard">⌨</button>
       </div>
       {showKb&&<Keyboard value={value} label={label||placeholder} color={color}
         multiline={multiline}
@@ -1430,7 +1510,7 @@ function NumPad({ value, onConfirm, onClose, color, label, unit="" }) {
     setV(s=>s+k);
   }
   const keys=[["7","8","9"],["4","5","6"],["1","2","3"],["C","0","⌫"]];
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -1469,7 +1549,8 @@ function NumPad({ value, onConfirm, onClose, color, label, unit="" }) {
           borderRadius:18,fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,
           cursor:"pointer",boxShadow:`0 4px 24px ${color}44`}}>CONFIRM</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1726,7 +1807,10 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
         backgroundImage:"linear-gradient(rgba(255,255,255,0.011) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.011) 1px,transparent 1px)",
         backgroundSize:"80px 80px"}}/>
       <div style={{textAlign:"center",position:"relative"}}>
-        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,letterSpacing:8,color:"#2a2a2a",marginBottom:6}}>FAMILY GYM TRACKER</div>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,letterSpacing:8,color:"#2a2a2a",marginBottom:6}}>
+          FAMILY GYM TRACKER
+          <span style={{marginLeft:12,fontSize:10,letterSpacing:2,color:"#1a3a1a"}}>☁ SYNCED</span>
+        </div>
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:84,lineHeight:1,color:"#F0F0F0",letterSpacing:3}}>WHO'S<br/>TRAINING?</div>
         <div style={{
           marginTop:16, display:"inline-flex", alignItems:"center", gap:10,
@@ -1792,21 +1876,44 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // SESSION SCREEN — side-by-side panels (fixed fullscreen)
 // ══════════════════════════════════════════════════════════════════════════════
-function SessionScreen({ activeIds: initialIds, users, programs, history, onSaveWorkout, onSaveAsProgram, onBack }) {
+function SessionScreen({ activeIds: initialIds, users, programs, history, goals, onSaveWorkout, onSaveAsProgram, onBack, onUpdateProgram, onUpdateUser, onUpdateGoals, onUpdateHistory }) {
   const [currentIds, setCurrentIds] = useState(initialIds);
+  const [leftIds, setLeftIds] = useState([]); // athletes who left but session continues
   const [showAddPicker, setShowAddPicker] = useState(false);
+  const [managingUser, setManagingUser] = useState(null); // {uid, view:"menu"|"edit"|"program"|"progress"|"sessions"} or null
   const active = users.filter(u => currentIds.includes(u.id));
-  const available = users.filter(u => !currentIds.includes(u.id));
-  const cols = active.length;
+  const left = users.filter(u => leftIds.includes(u.id));
+  const available = users.filter(u => !currentIds.includes(u.id) && !leftIds.includes(u.id));
+  const cols = active.length + left.length;
 
   function addAthlete(uid) {
     setCurrentIds(ids => [...ids, uid]);
+    setLeftIds(ids => ids.filter(id => id !== uid));
     setShowAddPicker(false);
   }
 
   function removeAthlete(uid) {
-    const next = currentIds.filter(id => id !== uid);
-    if (next.length === 0) { onBack(); } else { setCurrentIds(next); }
+    const nextActive = currentIds.filter(id => id !== uid);
+    if (nextActive.length === 0 && leftIds.length === 0) {
+      onBack();
+    } else {
+      setCurrentIds(nextActive);
+      setLeftIds(ids => [...ids, uid]);
+    }
+  }
+
+  function rejoinAthlete(uid) {
+    setLeftIds(ids => ids.filter(id => id !== uid));
+    setCurrentIds(ids => [...ids, uid]);
+  }
+
+  function fullyRemoveAthlete(uid) {
+    const nextLeft = leftIds.filter(id => id !== uid);
+    if (currentIds.length === 0 && nextLeft.length === 0) {
+      onBack();
+    } else {
+      setLeftIds(nextLeft);
+    }
   }
 
   return (
@@ -1823,7 +1930,7 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
       }}>
         <Btn label="✕ END ALL" size="sm" bg="transparent" color="#555" border="#1e1e1e" onClick={onBack} />
 
-        {/* Centre: active athlete name badges */}
+        {/* Centre: active + left athlete name badges */}
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           {active.map(u => (
             <div key={u.id} style={{ display:"flex", alignItems:"center", gap:5,
@@ -1832,6 +1939,15 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
               <span style={{ fontSize:14 }}>{u.emoji}</span>
               <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12,
                 letterSpacing:1, color:u.color }}>{u.name.toUpperCase()}</div>
+            </div>
+          ))}
+          {left.map(u => (
+            <div key={u.id} style={{ display:"flex", alignItems:"center", gap:5,
+              background:"#1a1a1a", border:"1px solid #2a2a2a",
+              borderRadius:8, padding:"4px 10px", opacity:0.4 }}>
+              <span style={{ fontSize:14 }}>{u.emoji}</span>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12,
+                letterSpacing:1, color:"#555" }}>{u.name.toUpperCase()}</div>
             </div>
           ))}
         </div>
@@ -1854,17 +1970,17 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
         )}
       </div>
 
-      {/* Columns */}
+      {/* Columns — always side-by-side, equal width */}
       <div style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
+        display: "flex",
         flex: 1, minHeight: 0, overflow: "hidden"
       }}>
         {active.map((u, i) => (
           <div key={u.id} style={{
-            borderRight: i < cols - 1 ? "2px solid #1a1a1a" : "none",
+            borderRight: (i < active.length - 1 || left.length > 0) ? "2px solid #1a1a1a" : "none",
             display: "flex", flexDirection: "column",
-            minHeight: 0, overflow: "hidden", position: "relative"
+            minHeight: 0, overflow: "clip", position: "relative",
+            flex: `1 1 ${100/cols}%`, minWidth: 0,
           }}>
             <WorkoutPanel
               user={u} program={programs[u.id]}
@@ -1875,7 +1991,281 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
             />
           </div>
         ))}
+
+        {/* Idle panels for athletes who left */}
+        {left.map((u, i) => {
+          const prog = programs[u.id];
+          const totalSessions = Object.keys(history[u.id]||{}).length;
+          return (
+            <div key={u.id} style={{
+              borderRight: i < left.length - 1 ? "2px solid #1a1a1a" : "none",
+              display: "flex", flexDirection: "column",
+              minHeight: 0, background: "#0a0a0a", position: "relative",
+              flex: `1 1 ${100/cols}%`, minWidth: 0,
+            }}>
+              {/* Header */}
+              <div style={{background:"#0d0d0d",borderBottom:`3px solid ${u.color}33`,padding:"14px 18px",
+                display:"flex",alignItems:"center",gap:14,flexShrink:0}}>
+                <Avatar user={u} size={44} />
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:u.color,letterSpacing:2,lineHeight:1,opacity:0.6}}>{u.name}</div>
+                  <div style={{color:"#333",fontSize:11,letterSpacing:2}}>SESSION ENDED</div>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                gap:14,padding:24,paddingBottom:40,
+                overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                <div style={{fontSize:42,opacity:0.4}}>{u.emoji}</div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#333",
+                  letterSpacing:3,textAlign:"center",lineHeight:1.2}}>
+                  DONE FOR<br/>TODAY?
+                </div>
+                <div style={{color:"#2a2a2a",fontSize:11,textAlign:"center",maxWidth:200,lineHeight:1.5}}>
+                  {prog?.name} · {totalSessions} sessions logged
+                </div>
+
+                <div style={{display:"flex",flexDirection:"column",gap:10,width:"100%",maxWidth:260,marginTop:8}}>
+                  <Btn full label="↩ REJOIN SESSION" bg={u.color} color="#000"
+                    onClick={()=>rejoinAthlete(u.id)}/>
+                  <Btn full label="👤 EDIT PROFILE" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"edit"})}/>
+                  <Btn full label="📋 BUILD / EDIT PROGRAM" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"program"})}/>
+                  <Btn full label="📈 VIEW PROGRESS" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"progress"})}/>
+                  <Btn full label="📝 EDIT SESSIONS" icon="" bg="rgba(255,255,255,0.06)" color="#ddd" border="#2a2a2a"
+                    onClick={()=>setManagingUser({uid:u.id,view:"sessions"})}/>
+                  <Btn full label="✕ LEAVE" bg="transparent" color="#555" border="#1e1e1e"
+                    onClick={()=>fullyRemoveAthlete(u.id)}/>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      {/* Manage overlay for left athletes — full manage access */}
+      {managingUser && (()=>{
+        const mu = users.find(u=>u.id===managingUser.uid);
+        if(!mu) return null;
+        const mv = managingUser.view;
+
+        const header = (title) => (
+          <div style={{background:"#0d0d0d",borderBottom:`3px solid ${mu.color}`,padding:"16px 24px",
+            display:"flex",alignItems:"center",gap:16,flexShrink:0}}>
+            <Btn label="← BACK" size="sm" bg="transparent" color="#555" border="#1e1e1e"
+              onClick={()=>setManagingUser(null)}/>
+            <Avatar user={mu} size={40}/>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:mu.color,letterSpacing:2,lineHeight:1}}>{mu.name}</div>
+              <div style={{color:"#444",fontSize:11,letterSpacing:2}}>{title}</div>
+            </div>
+          </div>
+        );
+
+        return (
+          <div style={{position:"absolute",inset:0,zIndex:300,background:"#080808",
+            display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+            {/* Edit Profile — UserEditModal renders its own Modal overlay */}
+            {mv==="edit" && (
+              <UserEditModal user={mu}
+                onSave={u=>{onUpdateUser(u);setManagingUser(null);}}
+                onClose={()=>setManagingUser(null)}/>
+            )}
+
+            {/* Program Editor */}
+            {mv==="program" && (
+              <div style={{flex:1,overflow:"auto"}}>
+                <ProgramEditor user={mu} program={programs[mu.id]}
+                  onSave={p=>{onUpdateProgram(mu.id,p);setManagingUser(null);}}
+                  onBack={()=>setManagingUser(null)}/>
+              </div>
+            )}
+
+            {/* Progress */}
+            {mv==="progress" && (
+              <div style={{flex:1,overflow:"auto"}}>
+                <ProgressScreen user={mu} program={programs[mu.id]}
+                  history={history[mu.id]||{}} goals={goals[mu.id]||{}}
+                  onUpdateGoals={g=>onUpdateGoals(mu.id,g)}
+                  onUpdateUser={onUpdateUser}
+                  onBack={()=>setManagingUser(null)}/>
+              </div>
+            )}
+
+            {/* Edit Sessions */}
+            {mv==="sessions" && (()=>{
+              const userHistory = history[mu.id]||{};
+              const sortedSessions = Object.entries(userHistory).sort(([a],[b])=>b.localeCompare(a));
+              const [expandedSess, setExpandedSess] = useState(null);
+              const [addingExTo, setAddingExTo] = useState(null); // session key
+
+              function updateSession(date, patch){
+                const nh = {...userHistory, [date]: {...userHistory[date], ...patch}};
+                onUpdateHistory(mu.id, nh);
+              }
+              function updateNamedLog(date, newLog){
+                updateSession(date, {namedLog: newLog});
+              }
+              function addSetToEx(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                if(!log[exName]) log[exName]=[];
+                log[exName] = [...log[exName], {weight:"0",reps:"0",rpe:0}];
+                updateNamedLog(date, log);
+              }
+              function updateSet(date, exName, setIdx, patch){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                log[exName] = (log[exName]||[]).map((s,i)=>i===setIdx?{...s,...patch}:s);
+                updateNamedLog(date, log);
+              }
+              function deleteSet(date, exName, setIdx){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                log[exName] = (log[exName]||[]).filter((_,i)=>i!==setIdx);
+                if(log[exName].length===0) delete log[exName];
+                updateNamedLog(date, log);
+              }
+              function addExToSession(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                if(log[exName]) return; // already exists
+                log[exName] = [{weight:"0",reps:"0",rpe:0}];
+                updateNamedLog(date, log);
+                setAddingExTo(null);
+              }
+              function deleteExFromSession(date, exName){
+                const sess = userHistory[date];
+                const log = {...(sess.namedLog||{})};
+                delete log[exName];
+                updateNamedLog(date, log);
+              }
+
+              return (
+                <>
+                  {header("EDIT SESSIONS · "+sortedSessions.length+" SESSIONS")}
+                  <div style={{flex:1,overflow:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:10}}>
+                    {sortedSessions.length===0&&(
+                      <div style={{color:"#2a2a2a",textAlign:"center",padding:60,fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>NO SESSIONS YET</div>
+                    )}
+                    {sortedSessions.map(([date,sess])=>{
+                      const ts=Object.values(sess.namedLog||{}).flat().filter(Boolean).length;
+                      const exNames=Object.keys(sess.namedLog||{});
+                      const isExpanded = expandedSess===date;
+                      return (
+                        <div key={date} style={{background:"#0d0d0d",border:`2px solid ${isExpanded?mu.color+"44":"#1a1a1a"}`,
+                          borderRadius:16,overflow:"hidden"}}>
+                          {/* Session header — tap to expand */}
+                          <div onClick={()=>setExpandedSess(isExpanded?null:date)}
+                            style={{padding:"14px 18px",display:"flex",alignItems:"center",gap:14,cursor:"pointer"}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",letterSpacing:2,lineHeight:1}}>{sess.day}</div>
+                              <div style={{color:"#444",fontSize:12,marginTop:2}}>
+                                {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
+                                {" · "}{ts} sets · {exNames.length} exercises
+                              </div>
+                            </div>
+                            <div style={{color:"#333",fontSize:16}}>{isExpanded?"▼":"▶"}</div>
+                            <button onClick={e=>{e.stopPropagation();
+                              const nh={...userHistory};delete nh[date];onUpdateHistory(mu.id,nh);
+                            }} style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.25)",
+                              borderRadius:9,color:"#FF6060",padding:"8px 12px",cursor:"pointer",fontSize:14}}>🗑</button>
+                          </div>
+
+                          {/* Expanded: exercise and set editor */}
+                          {isExpanded&&(
+                            <div style={{borderTop:`1px solid #1e1e1e`,padding:"14px 18px",display:"flex",flexDirection:"column",gap:12}}>
+                              {exNames.map(exName=>{
+                                const sets = (sess.namedLog[exName]||[]).filter(Boolean);
+                                return (
+                                  <div key={exName} style={{background:"#111",borderRadius:12,border:"1px solid #1e1e1e",overflow:"hidden"}}>
+                                    {/* Exercise header */}
+                                    <div style={{padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",
+                                      borderBottom:"1px solid #1a1a1a"}}>
+                                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:mu.color,letterSpacing:2}}>{exName}</div>
+                                      <div style={{display:"flex",gap:6}}>
+                                        <button onClick={()=>addSetToEx(date,exName)}
+                                          style={{background:`${mu.color}18`,border:`1px solid ${mu.color}44`,borderRadius:7,
+                                            color:mu.color,padding:"4px 10px",cursor:"pointer",fontSize:10,
+                                            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>+ SET</button>
+                                        <button onClick={()=>deleteExFromSession(date,exName)}
+                                          style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.2)",
+                                            borderRadius:7,color:"#FF6060",padding:"4px 8px",cursor:"pointer",fontSize:12}}>✕</button>
+                                      </div>
+                                    </div>
+                                    {/* Sets */}
+                                    <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:6}}>
+                                      {sets.map((s,si)=>(
+                                        <div key={si} style={{display:"flex",alignItems:"center",gap:8}}>
+                                          <div style={{color:"#333",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                                            letterSpacing:1,width:28,flexShrink:0}}>S{si+1}</div>
+                                          <div style={{display:"flex",gap:4,flex:1,alignItems:"center"}}>
+                                            <input type="number" value={s.weight||""} placeholder="0"
+                                              onChange={e=>updateSet(date,exName,si,{weight:e.target.value})}
+                                              style={{width:60,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                            <span style={{color:"#333",fontSize:10}}>kg ×</span>
+                                            <input type="number" value={s.reps||""} placeholder="0"
+                                              onChange={e=>updateSet(date,exName,si,{reps:e.target.value})}
+                                              style={{width:50,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                            <span style={{color:"#333",fontSize:10}}>reps</span>
+                                            <span style={{color:"#333",fontSize:10,marginLeft:4}}>RPE</span>
+                                            <input type="number" value={s.rpe||""} placeholder="—" min="1" max="10"
+                                              onChange={e=>updateSet(date,exName,si,{rpe:parseFloat(e.target.value)||0})}
+                                              style={{width:40,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                color:"#F0F0F0",padding:"6px 6px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                textAlign:"center",outline:"none"}}/>
+                                          </div>
+                                          <button onClick={()=>deleteSet(date,exName,si)}
+                                            style={{background:"none",border:"1px solid #2a1a1a",borderRadius:6,
+                                              color:"#884444",padding:"4px 6px",cursor:"pointer",fontSize:10,flexShrink:0}}>✕</button>
+                                        </div>
+                                      ))}
+                                      {sets.length===0&&(
+                                        <div style={{color:"#2a2a2a",fontSize:11,textAlign:"center",padding:8}}>No sets — tap + SET to add</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {/* Add exercise to session */}
+                              {addingExTo===date ? (
+                                <div style={{background:"#111",borderRadius:12,border:`1px solid ${mu.color}44`,padding:12}}>
+                                  <div style={{color:"#555",fontSize:10,letterSpacing:2,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>ADD EXERCISE</div>
+                                  <TouchTextInput value="" onChange={name=>{if(name.trim())addExToSession(date,name.trim());}}
+                                    placeholder="Type exercise name + Done" color={mu.color}/>
+                                  <button onClick={()=>setAddingExTo(null)} style={{background:"none",border:"none",
+                                    color:"#444",cursor:"pointer",fontSize:11,marginTop:6,
+                                    fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CANCEL</button>
+                                </div>
+                              ) : (
+                                <button onClick={()=>setAddingExTo(date)}
+                                  style={{background:"none",border:`1px dashed ${mu.color}33`,borderRadius:10,
+                                    color:`${mu.color}66`,padding:"10px",cursor:"pointer",fontSize:11,
+                                    fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2}}>
+                                  + ADD EXERCISE TO SESSION
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        );
+      })()}
 
       {/* JOIN SESSION picker overlay */}
       {showAddPicker && (
@@ -1936,22 +2326,22 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, onSave
 function LeaveBtn({ color, onLeave, userName }) {
   const [confirm, setConfirm] = useState(false);
   if (confirm) return (
-    <div style={{display:"flex",gap:6,alignItems:"center",
-      background:"#1a0a0a",border:"1px solid #FF444444",borderRadius:10,padding:"6px 10px"}}>
-      <span style={{color:"#888",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END?</span>
-      <button onClick={onLeave} style={{background:"#FF4444",border:"none",borderRadius:7,
-        color:"#fff",padding:"5px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
-        fontWeight:700,fontSize:12,letterSpacing:1}}>YES</button>
+    <div style={{display:"flex",gap:4,alignItems:"center",
+      background:"#1a0a0a",border:"1px solid #FF444444",borderRadius:8,padding:"4px 6px"}}>
+      <span style={{color:"#888",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END?</span>
+      <button onClick={onLeave} style={{background:"#FF4444",border:"none",borderRadius:6,
+        color:"#fff",padding:"4px 8px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
+        fontWeight:700,fontSize:10,letterSpacing:1}}>YES</button>
       <button onClick={()=>setConfirm(false)} style={{background:"none",border:"1px solid #333",
-        borderRadius:7,color:"#555",padding:"5px 10px",cursor:"pointer",fontSize:12}}>✕</button>
+        borderRadius:6,color:"#555",padding:"4px 6px",cursor:"pointer",fontSize:10}}>✕</button>
     </div>
   );
   return (
     <button onClick={()=>setConfirm(true)} style={{
-      background:"none", border:"1px solid #252525", borderRadius:8,
-      color:"#444", padding:"7px 13px", cursor:"pointer", fontSize:11,
-      fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:2,
-      transition:"all 0.15s",
+      background:"none", border:"1px solid #252525", borderRadius:7,
+      color:"#444", padding:"4px 8px", cursor:"pointer", fontSize:9,
+      fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1,
+      transition:"all 0.15s", flexShrink:0,
     }}
     onPointerEnter={e=>{e.currentTarget.style.borderColor="#FF4444";e.currentTarget.style.color="#FF6666";}}
     onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#444";}}>
@@ -1977,7 +2367,7 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
     ? allNames.filter(n=>n.toLowerCase().includes(query.toLowerCase()))
     : allNames;
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -2028,7 +2418,8 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2061,6 +2452,59 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const [freestyleName,setFreestyleName]=useState("");
   const [showSmartModal,setShowSmartModal]=useState(false);
   const C=user.color;
+  const RECOVERY_KEY = `gft-active-${user.id}`;
+
+  // Auto-save active session state for crash recovery
+  useEffect(()=>{
+    if(phase==="active" && selDay && exercises.length>0){
+      try{
+        localStorage.setItem(RECOVERY_KEY, JSON.stringify({
+          selDay, exercises, logged, exerciseNotes, sessionNotes,
+          currentExId, setIdx, sessionMode, isFreestyle, freestyleName,
+          startTime, sessionKey: sessionKeyRef.current,
+          savedAt: Date.now()
+        }));
+      }catch{}
+    }
+    if(phase==="done" || phase==="pick"){
+      try{ localStorage.removeItem(RECOVERY_KEY); }catch{}
+    }
+  },[phase, logged, exercises, exerciseNotes, sessionNotes, currentExId]);
+
+  // Check for recoverable session on mount
+  const [recoveryData, setRecoveryData] = useState(()=>{
+    try{
+      const raw = localStorage.getItem(RECOVERY_KEY);
+      if(raw){
+        const d = JSON.parse(raw);
+        if(d.savedAt && Date.now() - d.savedAt < 12*60*60*1000) return d;
+        localStorage.removeItem(RECOVERY_KEY);
+      }
+    }catch{}
+    return null;
+  });
+
+  function restoreSession(data){
+    setSelDay(data.selDay);
+    setExercises(data.exercises);
+    setLogged(data.logged||{});
+    setExerciseNotes(data.exerciseNotes||{});
+    setSessionNotes(data.sessionNotes||"");
+    setCurrentExId(data.currentExId);
+    setSetIdx(data.setIdx||0);
+    setSessionMode(data.sessionMode||"traditional");
+    setIsFreestyle(data.isFreestyle||false);
+    setFreestyleName(data.freestyleName||"");
+    setStartTime(data.startTime||Date.now());
+    sessionKeyRef.current = data.sessionKey||null;
+    setPhase("active");
+    setRecoveryData(null);
+  }
+
+  function dismissRecovery(){
+    try{ localStorage.removeItem(RECOVERY_KEY); }catch{}
+    setRecoveryData(null);
+  }
 
   // Get the last full session for a given day label
   function getLastSession(dayLabel) {
@@ -2200,6 +2644,58 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setSetIdx(0);
     setStartTime(Date.now());
     sessionKeyRef.current=null;
+    setSessionMode(day.defaultMode||"traditional");
+    setIsFreestyle(false);
+    setSavedAsProgram(false);
+    setFreestyleName("");
+    setPhase("active");
+  }
+
+  function reopenTodaySession(day){
+    // Find today's completed session for this day label
+    const todayIso = new Date().toISOString().split("T")[0];
+    const entry = Object.entries(history)
+      .filter(([key,sess])=>{
+        if(!sess || sess.day!==day.label) return false;
+        const sessDate = sess.date || dateOf(key);
+        return sessDate === todayIso;
+      })
+      .sort(([a],[b])=>b.localeCompare(a))[0]; // most recent if multiple
+    if(!entry) return startDay(day); // fallback to fresh start
+
+    const [sessKey, sess] = entry;
+    const namedLog = sess.namedLog || {};
+
+    // Rebuild exercises from the program day, preserving order
+    // Add any exercises from namedLog that aren't in the program (added mid-session)
+    const programExNames = day.exercises.map(e=>e.name);
+    const exCopy = day.exercises.map(e=>({...e}));
+    Object.keys(namedLog).forEach(name=>{
+      if(!programExNames.includes(name)){
+        exCopy.push({id:mkId(),name,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}});
+      }
+    });
+
+    // Rebuild logged sets from namedLog, keyed by exercise id
+    const logMap = {};
+    exCopy.forEach(ex=>{
+      const sets = namedLog[ex.name];
+      if(sets && sets.length > 0){
+        logMap[ex.id] = sets.map(s=>({
+          weight: s.weight, reps: s.reps, rpe: s.rpe||0
+        }));
+      }
+    });
+
+    setSelDay(day);
+    setExercises(exCopy);
+    setLogged(logMap);
+    setExerciseNotes(sess.exerciseNotes||{});
+    setSessionNotes(sess.notes||"");
+    setCurrentExId(exCopy[0]?.id||null);
+    setSetIdx(0);
+    setStartTime(Date.now());
+    sessionKeyRef.current = sessKey; // reuse the same key so finish overwrites
     setSessionMode(day.defaultMode||"traditional");
     setIsFreestyle(false);
     setSavedAsProgram(false);
@@ -2347,6 +2843,31 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setShowAddExModal(false);
   }
 
+  function moveExMidSession(fromIdx, toIdx){
+    if(toIdx<0) return;
+    setExercises(prev=>{
+      if(toIdx>=prev.length) return prev;
+      const ex=[...prev];
+      const [moved]=ex.splice(fromIdx,1);
+      ex.splice(toIdx,0,moved);
+      return ex;
+    });
+  }
+
+  const [insertAtIdx, setInsertAtIdx] = useState(null); // index to insert after
+
+  function insertExMidSession(exName, afterIdx){
+    const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    setExercises(prev=>{
+      const ex=[...prev];
+      ex.splice(afterIdx+1,0,newEx);
+      return ex;
+    });
+    setCurrentExId(newEx.id);
+    setSetIdx(0);
+    setInsertAtIdx(null);
+  }
+
   function skipToNext(){
     setTimer(null);
 
@@ -2490,16 +3011,37 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   // ── Pick Day ─────────────────────────────────────────────────
   if(phase==="pick") return (
     <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#0a0a0a"}}>
-      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"14px 18px",
-        display:"flex",alignItems:"center",gap:14,flexShrink:0}}>
-        <Avatar user={user} size={44} />
-        <div style={{flex:1}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:C,letterSpacing:2,lineHeight:1}}>{user.name}</div>
-          <div style={{color:"#444",fontSize:11,letterSpacing:2}}>{program?.name}</div>
+      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"10px 14px",
+        display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+        <Avatar user={user} size={36} />
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C,letterSpacing:2,lineHeight:1,
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div>
+          <div style={{color:"#444",fontSize:10,letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{program?.name}</div>
         </div>
-        <LeaveBtn color={C} onLeave={handleLeave} userName={user.name} />
+        <LeaveBtn color={C} onLeave={onLeave} userName={user.name} />
       </div>
       <div style={{padding:"16px",flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
+        {/* Crash recovery card */}
+        {recoveryData&&(
+          <div style={{background:"#1a1a0a",border:`2px solid ${C}55`,borderRadius:14,
+            padding:"16px 18px",marginBottom:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <span style={{fontSize:22}}>⚠️</span>
+              <div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C,letterSpacing:2,lineHeight:1}}>UNFINISHED SESSION</div>
+                <div style={{color:"#888",fontSize:11,marginTop:2}}>
+                  {recoveryData.selDay?.label} · {Object.values(recoveryData.logged||{}).reduce((a,s)=>a+(s?.filter(Boolean).length||0),0)} sets logged
+                  {recoveryData.savedAt&&<span> · {Math.round((Date.now()-recoveryData.savedAt)/60000)}m ago</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <Btn label="↩ RESUME" bg={C} color="#000" onClick={()=>restoreSession(recoveryData)}/>
+              <Btn label="✕ DISCARD" bg="transparent" color="#555" border="#333" onClick={dismissRecovery}/>
+            </div>
+          </div>
+        )}
         <div style={{color:"#333",fontSize:10,letterSpacing:3,marginBottom:2,fontFamily:"'Barlow Condensed',sans-serif"}}>SELECT TODAY'S WORKOUT</div>
         {program?.days?.map(d=>{
           const isFreq = d.scheduleType==="frequency";
@@ -2511,7 +3053,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           const lastSess = getLastSession(d.label);
           const doneToday = isDoneToday(d.label);
           return (
-            <div key={d.id} style={{display:"flex",flexDirection:"column",gap:0,opacity:doneToday?0.45:1}}>
+            <div key={d.id} style={{display:"flex",flexDirection:"column",gap:0}}>
             <TouchCard color={C} highlight={!doneToday&&(isToday||(isFreq&&remaining>0))} onClick={()=>{if(!doneToday)startDay(d);}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div style={{flex:1}}>
@@ -2551,6 +3093,25 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                 </div>
               )}
             </TouchCard>
+            {/* Reopen today's session */}
+            {doneToday&&(
+              <div style={{display:"flex",gap:0,borderRadius:"0 0 16px 16px",overflow:"hidden",border:`1px solid #1e1e1e`,borderTop:"none"}}>
+                <button onClick={e=>{e.stopPropagation();reopenTodaySession(d);}}
+                  style={{flex:1,background:"#0d0d0d",border:"none",padding:"10px 16px",cursor:"pointer",
+                    display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13}}>📝</span>
+                  <span style={{color:"#666",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:1}}>EDIT / CONTINUE SESSION</span>
+                </button>
+                <button onClick={e=>{e.stopPropagation();startDay(d);}}
+                  style={{background:"#0d0d0d",border:"none",borderLeft:"1px solid #1e1e1e",
+                    padding:"10px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:11}}>➕</span>
+                  <span style={{color:"#444",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:1}}>NEW</span>
+                </button>
+              </div>
+            )}
             {/* Repeat last workout button */}
             {lastSess&&!doneToday&&(
               <button onClick={e=>{e.stopPropagation();repeatLastSession(d);}}
@@ -2739,7 +3300,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
             onClick={()=>{setPhase("active");setSessionStats(null);}} />
           <Btn full label="NEW WORKOUT" icon="↩" bg={C} color="#000"
             onClick={()=>{setPhase("pick");setSelDay(null);setLogged({});setExerciseNotes({});setSessionStats(null);setSessionNotes("");sessionKeyRef.current=null;setIsFreestyle(false);setSavedAsProgram(false);setFreestyleName("");}} />
-          <Btn full label="LEAVE SESSION" icon="✓" bg="transparent" color="#555" border="#2a2a2a" onClick={handleLeave} />
+          <Btn full label="LEAVE SESSION" icon="✓" bg="transparent" color="#555" border="#2a2a2a" onClick={onLeave} />
         </div>
       </div>
     );
@@ -2750,33 +3311,41 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   return (
     <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#0a0a0a",position:"relative"}}>
       {showAddExModal&&(
-        <AddExerciseModal color={C} history={history||{}} onAdd={addExerciseMidSession} onClose={()=>setShowAddExModal(false)}/>
+        <AddExerciseModal color={C} history={history||{}} onAdd={name=>{
+          if(insertAtIdx!==null){
+            insertExMidSession(name, insertAtIdx);
+          } else {
+            addExerciseMidSession(name);
+          }
+          setShowAddExModal(false);
+        }} onClose={()=>{setShowAddExModal(false);setInsertAtIdx(null);}}/>
       )}
       {timer && <InlineTimer key={timer.key} duration={timer.dur} color={C} onDone={skipToNext} onSkip={skipToNext}/>}
 
       {/* Header */}
-      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"10px 14px",
-        display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <Avatar user={user} size={36}/>
-          <div>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:C,letterSpacing:2,lineHeight:1}}>{user.name}</div>
-            <div style={{color:"#444",fontSize:10,letterSpacing:1}}>{isFreestyle?"⚡ ":""}{selDay.label} · {doneCount}/{exercises.length}</div>
+      <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"8px 10px",
+        display:"flex",alignItems:"center",gap:8,flexShrink:0,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0,flex:"1 1 auto"}}>
+          <Avatar user={user} size={32}/>
+          <div style={{minWidth:0}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:C,letterSpacing:2,lineHeight:1,
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.name}</div>
+            <div style={{color:"#444",fontSize:9,letterSpacing:1}}>{isFreestyle?"⚡ ":""}{selDay.label} · {doneCount}/{exercises.length}</div>
           </div>
         </div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
           {/* Session mode toggle */}
-          <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:"1px solid #252525",flexShrink:0}}>
-            {[["traditional","TRAD"],["circuit","CIRCUIT"]].map(([val,label])=>{
+          <div style={{display:"flex",gap:0,borderRadius:7,overflow:"hidden",border:"1px solid #252525",flexShrink:0}}>
+            {[["traditional","TRAD"],["circuit","CIRC"]].map(([val,label])=>{
               const on = sessionMode===val;
               return (
                 <button key={val} onClick={()=>setSessionMode(val)} style={{
-                  padding:"5px 8px", cursor:"pointer", border:"none",
+                  padding:"4px 6px", cursor:"pointer", border:"none",
                   background: on ? C : "#141414",
                   color: on ? "#000" : "#555",
                   fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700,
-                  fontSize:10, letterSpacing:1, transition:"all 0.12s",
-                  minWidth:42}}>
+                  fontSize:9, letterSpacing:1, transition:"all 0.12s",
+                  minWidth:36}}>
                   {label}
                 </button>
               );
@@ -2784,8 +3353,8 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           </div>
           <UnitToggle useKg={useKg} onChange={setUseKg} color={C}/>
           <button onClick={()=>setPhase("pick")} style={{background:"none",border:"1px solid #252525",
-            borderRadius:8,color:"#444",padding:"6px 11px",cursor:"pointer",fontSize:10,
-            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2}}>← DAYS</button>
+            borderRadius:7,color:"#444",padding:"4px 8px",cursor:"pointer",fontSize:9,
+            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>← DAYS</button>
           <LeaveBtn color={C} onLeave={handleLeave} userName={user.name}/>
         </div>
       </div>
@@ -2863,10 +3432,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
               {/* Exercise row header */}
               <div onClick={()=>selectEx(ex.id)}
-                style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-                {/* Drag handle */}
-                <div style={{color:"#2a2a2a",fontSize:18,cursor:"grab",userSelect:"none",
-                  flexShrink:0,lineHeight:1}}>⠿</div>
+                style={{padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}>
+                {/* Move up/down buttons */}
+                <div style={{display:"flex",flexDirection:"column",gap:1,flexShrink:0}}
+                  onClick={e=>e.stopPropagation()}>
+                  <button onClick={()=>moveExMidSession(exIdx,exIdx-1)} disabled={exIdx===0}
+                    style={{width:22,height:18,borderRadius:4,border:"none",
+                      background:exIdx===0?"transparent":"#1a1a1a",
+                      color:exIdx===0?"#1a1a1a":"#555",cursor:exIdx===0?"default":"pointer",
+                      fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▲</button>
+                  <button onClick={()=>moveExMidSession(exIdx,exIdx+1)} disabled={exIdx===exercises.length-1}
+                    style={{width:22,height:18,borderRadius:4,border:"none",
+                      background:exIdx===exercises.length-1?"transparent":"#1a1a1a",
+                      color:exIdx===exercises.length-1?"#1a1a1a":"#555",
+                      cursor:exIdx===exercises.length-1?"default":"pointer",
+                      fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▼</button>
+                </div>
 
                 {/* Status badge */}
                 <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,
@@ -3013,12 +3594,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                 </div>
               )}
             </div>
+            {/* Insert exercise after this one */}
+            <button onClick={e=>{e.stopPropagation();setInsertAtIdx(exIdx);setShowAddExModal(true);}}
+              style={{width:"100%",background:"none",border:"1px dashed #1e1e1e",borderRadius:8,
+                color:"#252525",padding:"3px",cursor:"pointer",fontSize:8,margin:"3px 0",
+                fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                transition:"all 0.15s"}}
+              onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+              onPointerLeave={e=>{e.currentTarget.style.borderColor="#1e1e1e";e.currentTarget.style.color="#252525";}}>
+              + INSERT
+            </button>
             </div>
           );
         })}
 
         {/* Finish button when all done */}
-        <button onClick={()=>setShowAddExModal(true)}
+        <button onClick={()=>{setInsertAtIdx(null);setShowAddExModal(true);}}
           style={{background:"none",border:`1px dashed ${C}33`,borderRadius:12,
             color:`${C}66`,padding:"12px",cursor:"pointer",fontSize:12,
             fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,width:"100%"}}>
@@ -3036,7 +3627,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
 // ─── Plate Calculator ─────────────────────────────────────────────────────────
 function calcPlates(targetLbs, barbellLbs=45) {
-  const plates = [45,35,25,10,5,2.5];
+  const plates = [45,35,25,10,5,2.5,0.5];
   let remaining = (targetLbs - barbellLbs) / 2;
   if(remaining <= 0) return [];
   const result = [];
@@ -3061,11 +3652,11 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
     : barbellWt;
 
   const plateList = calcPlates(targetLbs, barbellLbs);
-  const PLATE_COLORS = {45:"#FF6B35",35:"#00D4FF",25:"#A8FF3E",10:"#888",5:"#aaa",2.5:"#555"};
+  const PLATE_COLORS = {45:"#FF6B35",35:"#00D4FF",25:"#A8FF3E",10:"#888",5:"#aaa",2.5:"#555",0.5:"#444"};
 
   const totalCheck = barbellLbs + plateList.reduce((a,p)=>a+p.weight*p.count*2, 0);
 
-  return (
+  return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9600,display:"flex",flexDirection:"column",
       justifyContent:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
@@ -3148,7 +3739,8 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -3701,7 +4293,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
               bg="rgba(255,255,255,0.05)" color="#ddd" border="#2a2a2a"
               onClick={()=>fileRef.current?.click()}/>
           </div>
-          <input ref={fileRef} type="file" accept=".csv" onChange={handleFileSelect}
+          <input ref={fileRef} type="file" onChange={handleFileSelect}
             style={{display:"none"}}/>
           {importMsg&&(
             <div style={{marginTop:12,padding:"8px 14px",borderRadius:9,fontSize:13,
@@ -4061,9 +4653,22 @@ function ProgramEditor({ user, program, onSave, onBack }) {
   const upDay=(id,patch)=>setProg(p=>({...p,days:p.days.map(d=>d.id===id?{...d,...patch}:d)}));
   const addEx=did=>{const e={id:mkId(),name:"New Exercise",sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setProg(p=>({...p,days:p.days.map(d=>d.id===did?{...d,exercises:[...d.exercises,e]}:d)}));};
+  const insertEx=(did,afterIdx)=>{const e={id:mkId(),name:"New Exercise",sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    setProg(p=>({...p,days:p.days.map(d=>{if(d.id!==did)return d;const ex=[...d.exercises];ex.splice(afterIdx+1,0,e);return{...d,exercises:ex};})}));};
   const delEx=(did,eid)=>setProg(p=>({...p,days:p.days.map(d=>d.id===did?{...d,exercises:d.exercises.filter(e=>e.id!==eid)}:d)}));
   const upEx=(did,eid,patch)=>setProg(p=>({...p,days:p.days.map(d=>d.id===did?
     {...d,exercises:d.exercises.map(e=>e.id===eid?{...e,...patch}:e)}:d)}));
+  const moveEx=(did,fromIdx,toIdx)=>{
+    if(toIdx<0) return;
+    setProg(p=>({...p,days:p.days.map(d=>{
+      if(d.id!==did) return d;
+      if(toIdx>=d.exercises.length) return d;
+      const ex=[...d.exercises];
+      const [moved]=ex.splice(fromIdx,1);
+      ex.splice(toIdx,0,moved);
+      return{...d,exercises:ex};
+    })}));
+  };
 
   return (
     <div style={{minHeight:"100vh",background:"#080808"}}>
@@ -4197,6 +4802,18 @@ function ProgramEditor({ user, program, onSave, onBack }) {
 
                   return (
                     <div key={ex.id}>
+                      {/* Insert exercise button between exercises */}
+                      {i===0&&(
+                        <button onClick={()=>insertEx(day.id,-1)} style={{
+                          width:"100%",background:"none",border:"1px dashed #252525",borderRadius:8,
+                          color:"#333",padding:"4px",cursor:"pointer",fontSize:9,marginBottom:6,
+                          fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                          transition:"all 0.15s"}}
+                          onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+                          onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#333";}}>
+                          + INSERT HERE
+                        </button>
+                      )}
                       {/* Superset link button between exercises */}
                       {i>0 && prevEx?.groupId===ex.groupId && ex.groupId && (
                         <div style={{display:"flex",alignItems:"center",gap:8,margin:"-4px 0 -4px 20px"}}>
@@ -4223,9 +4840,25 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                             </div>
                           </div>
                         )}
-                        <ExEditor key={ex.id} ex={ex} num={i+1} color={C}
-                          onUpdate={p=>upEx(day.id,ex.id,p)}
-                          onDelete={()=>delEx(day.id,ex.id)}/>
+                        {/* Move up/down + exercise editor */}
+                        <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                          <div style={{display:"flex",flexDirection:"column",gap:2,paddingTop:8,flexShrink:0}}>
+                            <button onClick={()=>moveEx(day.id,i,i-1)} disabled={i===0}
+                              style={{width:28,height:28,borderRadius:6,border:"1px solid #252525",
+                                background:"#1a1a1a",color:i===0?"#1a1a1a":"#666",cursor:i===0?"default":"pointer",
+                                fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+                            <button onClick={()=>moveEx(day.id,i,i+1)} disabled={i===day.exercises.length-1}
+                              style={{width:28,height:28,borderRadius:6,border:"1px solid #252525",
+                                background:"#1a1a1a",color:i===day.exercises.length-1?"#1a1a1a":"#666",
+                                cursor:i===day.exercises.length-1?"default":"pointer",
+                                fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <ExEditor key={ex.id} ex={ex} num={i+1} color={C}
+                              onUpdate={p=>upEx(day.id,ex.id,p)}
+                              onDelete={()=>delEx(day.id,ex.id)}/>
+                          </div>
+                        </div>
                         {/* Link / unlink controls */}
                         <div style={{display:"flex",gap:6,marginTop:6,marginBottom:4}}>
                           {canLink && !prevEx?.groupId && (
@@ -4254,6 +4887,16 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                           )}
                         </div>
                       </div>
+                      {/* Insert exercise after this one */}
+                      <button onClick={()=>insertEx(day.id,i)} style={{
+                        width:"100%",background:"none",border:"1px dashed #252525",borderRadius:8,
+                        color:"#333",padding:"4px",cursor:"pointer",fontSize:9,marginTop:4,
+                        fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                        transition:"all 0.15s"}}
+                        onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+                        onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#333";}}>
+                        + INSERT HERE
+                      </button>
                     </div>
                   );
                 })}
@@ -5822,10 +6465,42 @@ function App() {
   const BACKUP_INTERVAL = 5; // remind every N sessions
 
   useEffect(()=>{
-    Promise.all([sGet("gft-users"),sGet("gft-programs"),sGet("gft-history"),sGet("gft-goals")]).then(([u,p,h,g])=>{
-      if(u)setUsers(u); if(p)setPrograms(p); if(h)setHistory(h); if(g)setGoals(g);
+    async function loadData(){
+      // 1. Load from localStorage first (instant, works offline)
+      const [lu,lp,lh,lg] = await Promise.all([
+        sGet("gft-users"),sGet("gft-programs"),sGet("gft-history"),sGet("gft-goals")
+      ]);
+      if(lu)setUsers(lu); if(lp)setPrograms(lp); if(lh)setHistory(lh); if(lg)setGoals(lg);
       setLoaded(true);
-    });
+
+      // 2. Try to pull from Google Sheets in background (cross-device sync)
+      try {
+        const cloud = await syncFromSheet();
+        if(cloud && Object.keys(cloud).length > 0){
+          const cu = cloud["gft-users"] ? JSON.parse(cloud["gft-users"]) : null;
+          const cp = cloud["gft-programs"] ? JSON.parse(cloud["gft-programs"]) : null;
+          const ch = cloud["gft-history"] ? JSON.parse(cloud["gft-history"]) : null;
+          const cg = cloud["gft-goals"] ? JSON.parse(cloud["gft-goals"]) : null;
+
+          // Use cloud data if it has more history (more sessions = more recent)
+          const localSessionCount = Object.values(lh||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+          const cloudSessionCount = Object.values(ch||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+
+          if(cloudSessionCount > localSessionCount){
+            if(cu){setUsers(cu); try{localStorage.setItem("gft-users",JSON.stringify(cu));}catch{}}
+            if(cp){setPrograms(cp); try{localStorage.setItem("gft-programs",JSON.stringify(cp));}catch{}}
+            if(ch){setHistory(ch); try{localStorage.setItem("gft-history",JSON.stringify(ch));}catch{}}
+            if(cg){setGoals(cg); try{localStorage.setItem("gft-goals",JSON.stringify(cg));}catch{}}
+            console.log("Synced from cloud:", cloudSessionCount, "sessions (local had", localSessionCount+")");
+          } else if(localSessionCount > 0 && cloudSessionCount === 0){
+            // Local has data but cloud is empty — push local to cloud
+            syncAllToSheet();
+            console.log("Pushed local data to cloud:", localSessionCount, "sessions");
+          }
+        }
+      } catch(e){ console.log("Cloud sync skipped:", e.message); }
+    }
+    loadData();
   },[]);
 
   const saveUsers=async u=>{setUsers(u);await sSet("gft-users",u);};
@@ -5931,7 +6606,12 @@ function App() {
 
   if(screen==="session") return (
     <><SessionScreen activeIds={activeIds} users={users} programs={programs}
-      history={history} onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram} onBack={()=>setScreen("home")}/><BackupOverlay/></>
+      history={history} goals={goals}
+      onSaveWorkout={saveWorkout} onSaveAsProgram={saveAsProgram}
+      onUpdateProgram={updateProgram} onUpdateUser={updateUser}
+      onUpdateGoals={updateGoals}
+      onUpdateHistory={(uid,h)=>saveHistory({...history,[uid]:h})}
+      onBack={()=>setScreen("home")}/><BackupOverlay/></>
   );
   if(screen==="manage") return (
     <><ManageScreen users={users} programs={programs} history={history} goals={goals}
