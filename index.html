@@ -4073,7 +4073,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                       fontStyle:"italic",lineHeight:1.4}}>"{sess.notes}"</div>}
                   </div>
                   <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>setEditingSession(isEditing?null:{date,originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
+                    <button onClick={()=>setEditingSession(isEditing?null:{date:sess.date||dateOf(date),originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
                       style={{background:`${u.color}1a`,border:`1px solid ${u.color}44`,borderRadius:9,
                         color:u.color,padding:"8px 14px",cursor:"pointer",
                         fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2}}>
@@ -4128,9 +4128,9 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                           color:editingSession.date>=new Date().toISOString().split("T")[0]?"#2a2a2a":u.color,
                           fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
                       </div>
-                      {editingSession.date!==date&&(
+                      {editingSession.date!==(sess.date||dateOf(date))&&(
                         <div style={{marginTop:8,color:`${u.color}88`,fontSize:11,textAlign:"center",letterSpacing:1}}>
-                          Moving from {new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                          Moving from {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                           {" → "}{new Date(editingSession.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                         </div>
                       )}
@@ -4138,9 +4138,28 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
 
                     {/* Per-exercise set editor */}
                     {Object.entries(editingSession.sess.namedLog||{}).map(([exName,sets])=>(
-                      <div key={exName} style={{background:"#111",border:`1px solid ${u.color}22`,borderRadius:12,padding:"12px 14px"}}>
-                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#F0F0F0",letterSpacing:1,marginBottom:10}}>{exName}</div>
-                        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      <div key={exName} style={{background:"#111",border:`1px solid ${u.color}22`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",
+                          borderBottom:"1px solid #1a1a1a"}}>
+                          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#F0F0F0",letterSpacing:1}}>{exName}</div>
+                          <div style={{display:"flex",gap:6}}>
+                            <button onClick={()=>{
+                              const ns=JSON.parse(JSON.stringify(editingSession));
+                              if(!ns.sess.namedLog[exName]) ns.sess.namedLog[exName]=[];
+                              ns.sess.namedLog[exName].push({weight:"0",reps:"0",rpe:0});
+                              setEditingSession(ns);
+                            }} style={{background:`${u.color}18`,border:`1px solid ${u.color}44`,borderRadius:7,
+                              color:u.color,padding:"4px 10px",cursor:"pointer",fontSize:10,
+                              fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>+ SET</button>
+                            <button onClick={()=>{
+                              const ns=JSON.parse(JSON.stringify(editingSession));
+                              delete ns.sess.namedLog[exName];
+                              setEditingSession(ns);
+                            }} style={{background:"rgba(255,60,60,0.08)",border:"1px solid rgba(255,60,60,0.2)",
+                              borderRadius:7,color:"#FF6060",padding:"4px 8px",cursor:"pointer",fontSize:12}}>✕</button>
+                          </div>
+                        </div>
+                        <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:8}}>
                           {(sets||[]).filter(Boolean).map((s,si)=>(
                             <div key={si} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                               <div style={{color:"#444",fontSize:11,width:40,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>SET {si+1}</div>
@@ -4152,8 +4171,8 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                                     onChange={e=>{
                                       const lbs=parseFloat(e.target.value)||0;
                                       const kg=parseFloat((lbs/2.20462).toFixed(2));
-                                      const ns={...editingSession};
-                                      ns.sess.namedLog[exName][si]={...s,weight:kg};
+                                      const ns=JSON.parse(JSON.stringify(editingSession));
+                                      ns.sess.namedLog[exName][si]={...ns.sess.namedLog[exName][si],weight:kg};
                                       setEditingSession(ns);
                                     }}
                                     style={{width:80,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
@@ -4164,8 +4183,8 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                                   <input type="number"
                                     defaultValue={s.reps||""}
                                     onChange={e=>{
-                                      const ns={...editingSession};
-                                      ns.sess.namedLog[exName][si]={...s,reps:e.target.value};
+                                      const ns=JSON.parse(JSON.stringify(editingSession));
+                                      ns.sess.namedLog[exName][si]={...ns.sess.namedLog[exName][si],reps:e.target.value};
                                       setEditingSession(ns);
                                     }}
                                     style={{width:60,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
@@ -4177,32 +4196,67 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                                   <input type="number" min="0" max="10"
                                     defaultValue={s.rpe>0?s.rpe:""}
                                     onChange={e=>{
-                                      const ns={...editingSession};
-                                      ns.sess.namedLog[exName][si]={...s,rpe:parseFloat(e.target.value)||0};
+                                      const ns=JSON.parse(JSON.stringify(editingSession));
+                                      ns.sess.namedLog[exName][si]={...ns.sess.namedLog[exName][si],rpe:parseFloat(e.target.value)||0};
                                       setEditingSession(ns);
                                     }}
                                     style={{width:52,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
                                       color:"#F0F0F0",fontSize:16,padding:"8px 10px",outline:"none",boxSizing:"border-box"}}/>
                                 </div>
                                 <button onClick={()=>{
-                                  const ns={...editingSession};
-                                  ns.sess.namedLog[exName]=sets.filter((_,i)=>i!==si);
+                                  const ns=JSON.parse(JSON.stringify(editingSession));
+                                  ns.sess.namedLog[exName]=ns.sess.namedLog[exName].filter((_,i)=>i!==si);
                                   if(ns.sess.namedLog[exName].length===0) delete ns.sess.namedLog[exName];
                                   setEditingSession(ns);
                                 }} style={{background:"none",border:"none",color:"#FF6060",cursor:"pointer",fontSize:16,padding:"4px 6px"}}>🗑</button>
                               </div>
                             </div>
                           ))}
+                          {(!sets||sets.filter(Boolean).length===0)&&(
+                            <div style={{color:"#2a2a2a",fontSize:11,textAlign:"center",padding:8}}>No sets — tap + SET to add</div>
+                          )}
                         </div>
                       </div>
                     ))}
+
+                    {/* Add exercise to session */}
+                    <div style={{background:"#111",borderRadius:12,border:`1px dashed ${u.color}33`,padding:"10px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <input type="text" placeholder="New exercise name..."
+                          id={`add-ex-${date}`}
+                          style={{flex:1,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
+                            color:"#F0F0F0",fontSize:14,padding:"8px 12px",outline:"none",
+                            fontFamily:"'Barlow',sans-serif"}}/>
+                        <button onClick={()=>{
+                          const inp=document.getElementById(`add-ex-${date}`);
+                          const name=inp?.value?.trim();
+                          if(!name) return;
+                          const ns=JSON.parse(JSON.stringify(editingSession));
+                          if(!ns.sess.namedLog) ns.sess.namedLog={};
+                          if(ns.sess.namedLog[name]) return; // already exists
+                          ns.sess.namedLog[name]=[{weight:"0",reps:"0",rpe:0}];
+                          setEditingSession(ns);
+                          inp.value="";
+                        }} style={{background:`${u.color}18`,border:`1px solid ${u.color}44`,borderRadius:8,
+                          color:u.color,padding:"8px 14px",cursor:"pointer",fontSize:11,
+                          fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700,
+                          whiteSpace:"nowrap"}}>+ ADD</button>
+                      </div>
+                    </div>
                     <Btn full label="SAVE CHANGES" bg={u.color} color="#000" onClick={()=>{
                       const newDate = editingSession.date;
-                      const oldDate = editingSession.originalDate||date;
-                      if(!newDate) return; // guard against empty date
+                      const oldKey = editingSession.originalDate;
+                      const oldCleanDate = sess.date||dateOf(oldKey);
+                      if(!newDate) return;
                       const nh={...userHistory};
-                      if(newDate!==oldDate) delete nh[oldDate];
-                      nh[newDate]={...editingSession.sess, date:newDate};
+                      if(newDate !== oldCleanDate){
+                        // Date changed — delete old key, save under new date
+                        delete nh[oldKey];
+                        nh[newDate]={...editingSession.sess, date:newDate};
+                      } else {
+                        // Date unchanged — update in place under original key
+                        nh[oldKey]={...editingSession.sess, date:newDate};
+                      }
                       onUpdateHistory(u.id,nh);
                       setEditingSession(null);
                     }}/>
