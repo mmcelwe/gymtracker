@@ -2615,6 +2615,31 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setShowAddExModal(false);
   }
 
+  function moveExMidSession(fromIdx, toIdx){
+    if(toIdx<0) return;
+    setExercises(prev=>{
+      if(toIdx>=prev.length) return prev;
+      const ex=[...prev];
+      const [moved]=ex.splice(fromIdx,1);
+      ex.splice(toIdx,0,moved);
+      return ex;
+    });
+  }
+
+  const [insertAtIdx, setInsertAtIdx] = useState(null); // index to insert after
+
+  function insertExMidSession(exName, afterIdx){
+    const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    setExercises(prev=>{
+      const ex=[...prev];
+      ex.splice(afterIdx+1,0,newEx);
+      return ex;
+    });
+    setCurrentExId(newEx.id);
+    setSetIdx(0);
+    setInsertAtIdx(null);
+  }
+
   function skipToNext(){
     setTimer(null);
 
@@ -3019,7 +3044,14 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   return (
     <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#0a0a0a",position:"relative"}}>
       {showAddExModal&&(
-        <AddExerciseModal color={C} history={history||{}} onAdd={addExerciseMidSession} onClose={()=>setShowAddExModal(false)}/>
+        <AddExerciseModal color={C} history={history||{}} onAdd={name=>{
+          if(insertAtIdx!==null){
+            insertExMidSession(name, insertAtIdx);
+          } else {
+            addExerciseMidSession(name);
+          }
+          setShowAddExModal(false);
+        }} onClose={()=>{setShowAddExModal(false);setInsertAtIdx(null);}}/>
       )}
       {timer && <InlineTimer key={timer.key} duration={timer.dur} color={C} onDone={skipToNext} onSkip={skipToNext}/>}
 
@@ -3133,10 +3165,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
               {/* Exercise row header */}
               <div onClick={()=>selectEx(ex.id)}
-                style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-                {/* Drag handle */}
-                <div style={{color:"#2a2a2a",fontSize:18,cursor:"grab",userSelect:"none",
-                  flexShrink:0,lineHeight:1}}>⠿</div>
+                style={{padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}>
+                {/* Move up/down buttons */}
+                <div style={{display:"flex",flexDirection:"column",gap:1,flexShrink:0}}
+                  onClick={e=>e.stopPropagation()}>
+                  <button onClick={()=>moveExMidSession(exIdx,exIdx-1)} disabled={exIdx===0}
+                    style={{width:22,height:18,borderRadius:4,border:"none",
+                      background:exIdx===0?"transparent":"#1a1a1a",
+                      color:exIdx===0?"#1a1a1a":"#555",cursor:exIdx===0?"default":"pointer",
+                      fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▲</button>
+                  <button onClick={()=>moveExMidSession(exIdx,exIdx+1)} disabled={exIdx===exercises.length-1}
+                    style={{width:22,height:18,borderRadius:4,border:"none",
+                      background:exIdx===exercises.length-1?"transparent":"#1a1a1a",
+                      color:exIdx===exercises.length-1?"#1a1a1a":"#555",
+                      cursor:exIdx===exercises.length-1?"default":"pointer",
+                      fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▼</button>
+                </div>
 
                 {/* Status badge */}
                 <div style={{width:28,height:28,borderRadius:"50%",flexShrink:0,
@@ -3283,12 +3327,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                 </div>
               )}
             </div>
+            {/* Insert exercise after this one */}
+            <button onClick={e=>{e.stopPropagation();setInsertAtIdx(exIdx);setShowAddExModal(true);}}
+              style={{width:"100%",background:"none",border:"1px dashed #1e1e1e",borderRadius:8,
+                color:"#252525",padding:"3px",cursor:"pointer",fontSize:8,margin:"3px 0",
+                fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                transition:"all 0.15s"}}
+              onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+              onPointerLeave={e=>{e.currentTarget.style.borderColor="#1e1e1e";e.currentTarget.style.color="#252525";}}>
+              + INSERT
+            </button>
             </div>
           );
         })}
 
         {/* Finish button when all done */}
-        <button onClick={()=>setShowAddExModal(true)}
+        <button onClick={()=>{setInsertAtIdx(null);setShowAddExModal(true);}}
           style={{background:"none",border:`1px dashed ${C}33`,borderRadius:12,
             color:`${C}66`,padding:"12px",cursor:"pointer",fontSize:12,
             fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,width:"100%"}}>
@@ -4332,9 +4386,22 @@ function ProgramEditor({ user, program, onSave, onBack }) {
   const upDay=(id,patch)=>setProg(p=>({...p,days:p.days.map(d=>d.id===id?{...d,...patch}:d)}));
   const addEx=did=>{const e={id:mkId(),name:"New Exercise",sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setProg(p=>({...p,days:p.days.map(d=>d.id===did?{...d,exercises:[...d.exercises,e]}:d)}));};
+  const insertEx=(did,afterIdx)=>{const e={id:mkId(),name:"New Exercise",sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    setProg(p=>({...p,days:p.days.map(d=>{if(d.id!==did)return d;const ex=[...d.exercises];ex.splice(afterIdx+1,0,e);return{...d,exercises:ex};})}));};
   const delEx=(did,eid)=>setProg(p=>({...p,days:p.days.map(d=>d.id===did?{...d,exercises:d.exercises.filter(e=>e.id!==eid)}:d)}));
   const upEx=(did,eid,patch)=>setProg(p=>({...p,days:p.days.map(d=>d.id===did?
     {...d,exercises:d.exercises.map(e=>e.id===eid?{...e,...patch}:e)}:d)}));
+  const moveEx=(did,fromIdx,toIdx)=>{
+    if(toIdx<0) return;
+    setProg(p=>({...p,days:p.days.map(d=>{
+      if(d.id!==did) return d;
+      if(toIdx>=d.exercises.length) return d;
+      const ex=[...d.exercises];
+      const [moved]=ex.splice(fromIdx,1);
+      ex.splice(toIdx,0,moved);
+      return{...d,exercises:ex};
+    })}));
+  };
 
   return (
     <div style={{minHeight:"100vh",background:"#080808"}}>
@@ -4468,6 +4535,18 @@ function ProgramEditor({ user, program, onSave, onBack }) {
 
                   return (
                     <div key={ex.id}>
+                      {/* Insert exercise button between exercises */}
+                      {i===0&&(
+                        <button onClick={()=>insertEx(day.id,-1)} style={{
+                          width:"100%",background:"none",border:"1px dashed #252525",borderRadius:8,
+                          color:"#333",padding:"4px",cursor:"pointer",fontSize:9,marginBottom:6,
+                          fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                          transition:"all 0.15s"}}
+                          onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+                          onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#333";}}>
+                          + INSERT HERE
+                        </button>
+                      )}
                       {/* Superset link button between exercises */}
                       {i>0 && prevEx?.groupId===ex.groupId && ex.groupId && (
                         <div style={{display:"flex",alignItems:"center",gap:8,margin:"-4px 0 -4px 20px"}}>
@@ -4494,9 +4573,25 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                             </div>
                           </div>
                         )}
-                        <ExEditor key={ex.id} ex={ex} num={i+1} color={C}
-                          onUpdate={p=>upEx(day.id,ex.id,p)}
-                          onDelete={()=>delEx(day.id,ex.id)}/>
+                        {/* Move up/down + exercise editor */}
+                        <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                          <div style={{display:"flex",flexDirection:"column",gap:2,paddingTop:8,flexShrink:0}}>
+                            <button onClick={()=>moveEx(day.id,i,i-1)} disabled={i===0}
+                              style={{width:28,height:28,borderRadius:6,border:"1px solid #252525",
+                                background:"#1a1a1a",color:i===0?"#1a1a1a":"#666",cursor:i===0?"default":"pointer",
+                                fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+                            <button onClick={()=>moveEx(day.id,i,i+1)} disabled={i===day.exercises.length-1}
+                              style={{width:28,height:28,borderRadius:6,border:"1px solid #252525",
+                                background:"#1a1a1a",color:i===day.exercises.length-1?"#1a1a1a":"#666",
+                                cursor:i===day.exercises.length-1?"default":"pointer",
+                                fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <ExEditor key={ex.id} ex={ex} num={i+1} color={C}
+                              onUpdate={p=>upEx(day.id,ex.id,p)}
+                              onDelete={()=>delEx(day.id,ex.id)}/>
+                          </div>
+                        </div>
                         {/* Link / unlink controls */}
                         <div style={{display:"flex",gap:6,marginTop:6,marginBottom:4}}>
                           {canLink && !prevEx?.groupId && (
@@ -4525,6 +4620,16 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                           )}
                         </div>
                       </div>
+                      {/* Insert exercise after this one */}
+                      <button onClick={()=>insertEx(day.id,i)} style={{
+                        width:"100%",background:"none",border:"1px dashed #252525",borderRadius:8,
+                        color:"#333",padding:"4px",cursor:"pointer",fontSize:9,marginTop:4,
+                        fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,
+                        transition:"all 0.15s"}}
+                        onPointerEnter={e=>{e.currentTarget.style.borderColor=C;e.currentTarget.style.color=C;}}
+                        onPointerLeave={e=>{e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#333";}}>
+                        + INSERT HERE
+                      </button>
                     </div>
                   );
                 })}
