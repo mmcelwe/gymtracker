@@ -35,6 +35,14 @@ const DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sund
 const mkId = () => Math.random().toString(36).slice(2,9);
 const fmtTime = s => `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`;
 const todayStr = () => ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+
+// Local date as YYYY-MM-DD (avoids UTC timezone shift from toISOString)
+function localDateStr(d) {
+  const dt = d || new Date();
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+}
+const todayIsoLocal = () => localDateStr(new Date());
+
 // Normalize: old data used d.day (string), new data uses d.days (array)
 const getDays = d => Array.isArray(d.days) ? d.days : d.day ? [d.day] : [];
 
@@ -45,7 +53,7 @@ function weekStart() {
   const diff = (day === 0 ? -6 : 1 - day);
   const mon = new Date(now);
   mon.setDate(now.getDate() + diff);
-  return mon.toISOString().split("T")[0];
+  return localDateStr(mon);
 }
 
 // How many sessions of a named day were logged this week
@@ -2516,7 +2524,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
   // Check if a day label was already completed today (prevents duplicate same-day workouts)
   function isDoneToday(dayLabel) {
-    const todayIso = new Date().toISOString().split("T")[0];
+    const todayIso = todayIsoLocal();
     return Object.entries(history).some(([key,sess])=> {
       if(!sess || sess.day !== dayLabel) return false;
       const sessDate = sess.date || dateOf(key);
@@ -2620,7 +2628,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         if(sets.length) namedLog[ex.name]=sets;
       });
       if(Object.keys(namedLog).length>0) {
-        const dateStr=new Date().toISOString().split("T")[0];
+        const dateStr=todayIsoLocal();
         if(!sessionKeyRef.current) sessionKeyRef.current=`${dateStr}_${Date.now()}`;
         const dk=sessionKeyRef.current;
         onSaveWorkout(dk,{date:dateStr,day:selDay.label,exercises:logged,namedLog,...(stats||{}),partial:true,notes:sessionNotes.trim()||null,
@@ -2653,7 +2661,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
   function reopenTodaySession(day){
     // Find today's completed session for this day label
-    const todayIso = new Date().toISOString().split("T")[0];
+    const todayIso = todayIsoLocal();
     const entry = Object.entries(history)
       .filter(([key,sess])=>{
         if(!sess || sess.day!==day.label) return false;
@@ -2913,7 +2921,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   }
 
   function finish(){
-    const dateStr=new Date().toISOString().split("T")[0];
+    const dateStr=todayIsoLocal();
     // Reuse session key if going back and re-finishing; otherwise create unique key
     if(!sessionKeyRef.current) sessionKeyRef.current=`${dateStr}_${Date.now()}`;
     const dk=sessionKeyRef.current;
@@ -4100,7 +4108,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                         <button onClick={()=>{
                           const d=new Date(editingSession.date+"T12:00:00");
                           d.setDate(d.getDate()-1);
-                          setEditingSession(s=>({...s,date:d.toISOString().split("T")[0]}));
+                          setEditingSession(s=>({...s,date:localDateStr(d)}));
                         }} style={{width:44,height:44,borderRadius:10,background:"#1a1a1a",
                           border:`1px solid ${u.color}33`,color:u.color,fontSize:22,
                           cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
@@ -4111,21 +4119,21 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                               {weekday:"short",month:"short",day:"numeric",year:"numeric"})}
                           </div>
                           <input type="date" value={editingSession.date}
-                            max={new Date().toISOString().split("T")[0]}
+                            max={todayIsoLocal()}
                             onChange={e=>setEditingSession(s=>({...s,date:e.target.value}))}
                             style={{background:"none",border:"none",color:"#555",fontSize:11,
                               cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
                               letterSpacing:1,outline:"none",colorScheme:"dark",marginTop:4}}/>
                         </div>
                         <button onClick={()=>{
-                          const today=new Date().toISOString().split("T")[0];
+                          const today=todayIsoLocal();
                           if(editingSession.date>=today) return;
                           const d=new Date(editingSession.date+"T12:00:00");
                           d.setDate(d.getDate()+1);
-                          setEditingSession(s=>({...s,date:d.toISOString().split("T")[0]}));
+                          setEditingSession(s=>({...s,date:localDateStr(d)}));
                         }} style={{width:44,height:44,borderRadius:10,background:"#1a1a1a",
                           border:`1px solid ${u.color}33`,
-                          color:editingSession.date>=new Date().toISOString().split("T")[0]?"#2a2a2a":u.color,
+                          color:editingSession.date>=todayIsoLocal()?"#2a2a2a":u.color,
                           fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
                       </div>
                       {editingSession.date!==(sess.date||dateOf(date))&&(
@@ -5179,7 +5187,7 @@ function buildVolumeData(history, period, useImperial) {
     } else if(period==="week"){
       const d=new Date(dt); d.setHours(0,0,0,0);
       d.setDate(d.getDate()-d.getDay()+1);
-      key=d.toISOString().split("T")[0];
+      key=localDateStr(d);
     } else if(period==="month"){
       key=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;
     } else {
@@ -5504,7 +5512,7 @@ function BodyGoalModal({ user, onSave, onClose }) {
 function BiometricLogModal({ user, onSave, onClose }) {
   const bio = user.biometrics||{};
   const useKg = bio.units!=="us";
-  const todayIso = new Date().toISOString().split("T")[0];
+  const todayIso = todayIsoLocal();
   const [entryDate, setEntryDate] = useState(todayIso);
   // Pre-fill from the selected date's entry, or most recent, or current biometrics
   const sortedHist = (user.biometricHistory||[]).slice().sort((a,b)=>b.date.localeCompare(a.date));
@@ -5546,7 +5554,7 @@ function BiometricLogModal({ user, onSave, onClose }) {
         <div>
           <div style={{color:"#555",fontSize:11,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>DATE</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <button onClick={()=>{ const d=new Date(entryDate+"T12:00:00"); d.setDate(d.getDate()-1); handleDateChange(d.toISOString().split("T")[0]); }}
+            <button onClick={()=>{ const d=new Date(entryDate+"T12:00:00"); d.setDate(d.getDate()-1); handleDateChange(localDateStr(d)); }}
               style={{width:44,height:44,borderRadius:11,background:"#1a1a1a",border:`1px solid ${C}33`,
                 color:C,fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
             <div style={{flex:1,textAlign:"center"}}>
@@ -5556,7 +5564,7 @@ function BiometricLogModal({ user, onSave, onClose }) {
                   fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,outline:"none",
                   colorScheme:"dark",marginTop:2}}/>
             </div>
-            <button onClick={()=>{ if(entryDate>=todayIso) return; const d=new Date(entryDate+"T12:00:00"); d.setDate(d.getDate()+1); handleDateChange(d.toISOString().split("T")[0]); }}
+            <button onClick={()=>{ if(entryDate>=todayIso) return; const d=new Date(entryDate+"T12:00:00"); d.setDate(d.getDate()+1); handleDateChange(localDateStr(d)); }}
               style={{width:44,height:44,borderRadius:11,background:"#1a1a1a",border:`1px solid ${C}33`,
                 color:entryDate>=todayIso?"#2a2a2a":C,fontSize:22,cursor:entryDate>=todayIso?"default":"pointer",
                 display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
