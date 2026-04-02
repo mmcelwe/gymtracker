@@ -2886,19 +2886,27 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       // Circuit: advance to next exercise that still has sets remaining
       const idx = exercises.findIndex(e=>e.id===currentExId);
       const len = exercises.length;
-      const curSetsLogged = (logged[exercises[idx]?.id]||[]).filter(Boolean).length;
+      const curEx = exercises[idx];
+      const curSetsLogged = (logged[curEx?.id]||[]).filter(Boolean).length;
+      const curGroup = curEx?.groupId;
+      
+      // Check if we just finished a superset round (all group members have same count)
+      let supersetRoundJustCompleted = false;
+      if(curGroup){
+        const groupMembers = exercises.filter(e=>e.groupId===curGroup);
+        supersetRoundJustCompleted = groupMembers.every(e=>
+          (logged[e.id]||[]).filter(Boolean).length === curSetsLogged
+        );
+      }
       
       for(let offset=1; offset<=len; offset++){
         const nextIdx = (idx+offset)%len;
         const next = exercises[nextIdx];
         
-        // Skip same superset group members ONLY if they've already done this round
-        // (i.e. they have the same or more sets logged as current — the superset round just finished)
-        const curGroup = exercises[idx]?.groupId;
-        if(curGroup && next.groupId===curGroup){
-          const nextSets = (logged[next.id]||[]).filter(Boolean).length;
-          if(nextSets >= curSetsLogged) continue; // same round done, skip
-          // Otherwise they need to catch up — fall through to the check below
+        // Skip same group members ONLY if the round is NOT complete
+        // If round just completed, we need to wrap back to the first member for the next round
+        if(curGroup && next.groupId===curGroup && !supersetRoundJustCompleted){
+          continue; // mid-round: skip group members (they advance via logSet)
         }
         
         // Check if this exercise still needs sets
@@ -3346,15 +3354,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         if(sessionMode==="circuit"){
           const idx = exercises.findIndex(e=>e.id===currentExId);
           const len = exercises.length;
-          const curSetsLogged = (logged[exercises[idx]?.id]||[]).filter(Boolean).length;
+          const curEx = exercises[idx];
+          const curSetsLogged = (logged[curEx?.id]||[]).filter(Boolean).length;
+          const curGroup = curEx?.groupId;
+          
+          let supersetRoundJustCompleted = false;
+          if(curGroup){
+            const groupMembers = exercises.filter(e=>e.groupId===curGroup);
+            supersetRoundJustCompleted = groupMembers.every(e=>
+              (logged[e.id]||[]).filter(Boolean).length === curSetsLogged
+            );
+          }
+          
           for(let offset=1; offset<=len; offset++){
             const nextIdx = (idx+offset)%len;
             const next = exercises[nextIdx];
-            const curGroup = exercises[idx]?.groupId;
-            if(curGroup && next.groupId===curGroup){
-              const nextSets = (logged[next.id]||[]).filter(Boolean).length;
-              if(nextSets >= curSetsLogged) continue;
-            }
+            if(curGroup && next.groupId===curGroup && !supersetRoundJustCompleted) continue;
             const setsLogged = (logged[next.id]||[]).filter(Boolean).length;
             if(setsLogged < next.sets){ nextPreview=next; break; }
           }
