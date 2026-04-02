@@ -3347,11 +3347,24 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
             if(!isExDone(next)){ nextPreview=next; break; }
           }
         } else {
-          // Traditional: next in superset group, or null
+          // Traditional mode:
+          // 1. If in a superset, show next group member that needs sets
           const group = getGroupMembers(currentExId);
           if(group.length>1){
             const first = group.find(e=>!isExDone(e));
             if(first) nextPreview=first;
+          }
+          // 2. If current exercise still has sets remaining, show it (next set of same exercise)
+          if(!nextPreview && currentEx && !isExDone(currentEx)){
+            nextPreview = currentEx;
+          }
+          // 3. If current is done, show next incomplete exercise in the list
+          if(!nextPreview){
+            const idx = exercises.findIndex(e=>e.id===currentExId);
+            for(let i=1;i<exercises.length;i++){
+              const next = exercises[(idx+i)%exercises.length];
+              if(!isExDone(next)){ nextPreview=next; break; }
+            }
           }
         }
         // Get recommended weight for next exercise
