@@ -2761,6 +2761,9 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setLogged(nl);
     setSetIdx(si+1);
 
+    // Clear extra-set flag so it resets to the button
+    setExercises(prev=>prev.map(x=>x.id===currentExId?{...x,_addingExtra:false}:x));
+
     // Check superset: advance to next in group without rest
     const group = getGroupMembers(currentExId);
     if(group.length > 1){
@@ -3328,7 +3331,43 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
           setShowAddExModal(false);
         }} onClose={()=>{setShowAddExModal(false);setInsertAtIdx(null);}}/>
       )}
-      {timer && <InlineTimer key={timer.key} duration={timer.dur} color={C} onDone={skipToNext} onSkip={skipToNext}/>}
+      {timer && (()=>{
+        // Compute next exercise preview for rest timer
+        let nextPreview = null;
+        if(sessionMode==="circuit"){
+          const idx = exercises.findIndex(e=>e.id===currentExId);
+          const len = exercises.length;
+          const visited = new Set();
+          for(let offset=1; offset<=len; offset++){
+            const next = exercises[(idx+offset)%len];
+            const curGroup = currentEx?.groupId;
+            if(curGroup && next.groupId===curGroup) continue;
+            if(visited.has(next.groupId||next.id)) continue;
+            visited.add(next.groupId||next.id);
+            if(!isExDone(next)){ nextPreview=next; break; }
+          }
+        } else {
+          // Traditional: next in superset group, or null
+          const group = getGroupMembers(currentExId);
+          if(group.length>1){
+            const first = group.find(e=>!isExDone(e));
+            if(first) nextPreview=first;
+          }
+        }
+        // Get recommended weight for next exercise
+        const nextRec = nextPreview ? calcRecommended(nextPreview) : null;
+        const nextLastData = nextPreview ? getLastWorkoutData(nextPreview.name) : null;
+        const nextWeightKg = nextRec?.kg || (nextLastData ? parseFloat(nextLastData.weight)||0 : 0);
+        const nextWeightLbs = nextWeightKg ? parseFloat((nextWeightKg*2.20462).toFixed(1)) : 0;
+        const nextPlates = nextWeightLbs > 0 ? calcPlates(nextWeightLbs) : [];
+        const nextSetsLogged = nextPreview ? (logged[nextPreview.id]||[]).filter(Boolean).length : 0;
+
+        return <InlineTimer key={timer.key} duration={timer.dur} color={C}
+          onDone={skipToNext} onSkip={skipToNext}
+          nextEx={nextPreview} nextRec={nextRec} nextLastData={nextLastData}
+          nextWeightKg={nextWeightKg} nextPlates={nextPlates}
+          nextSetsLogged={nextSetsLogged} useKg={useKg}/>;
+      })()}
 
       {/* Header */}
       <div style={{background:"#0d0d0d",borderBottom:`3px solid ${C}`,padding:"8px 10px",
@@ -3404,7 +3443,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,marginLeft:4}}>
                 <span style={{fontSize:11}}>🔗</span>
                 <div style={{color:groupActive?C:"#444",fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",
-                  fontWeight:700,letterSpacing:2}}>SUPERSET</div>
+                  fontWeight:700,letterSpacing:2}}>{ex.groupLabel||"SUPERSET"}</div>
                 <div style={{flex:1,height:1,background:groupActive?`${C}44`:"#1e1e1e"}}/>
               </div>
             )}
@@ -3519,7 +3558,28 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                     </div>
                   )}
                   {isActive&&!done&&(
-                    <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                    <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap",alignItems:"center"}}>
+                      {/* Set count adjuster */}
+                      <div style={{display:"flex",alignItems:"center",gap:2,background:"#141414",
+                        border:"1px solid #252525",borderRadius:7,padding:"2px 4px"}}
+                        onClick={e=>e.stopPropagation()}>
+                        <button onClick={()=>{
+                          const minSets = Math.max(1, loggedSets.length); // can't go below already logged
+                          if(ex.sets <= minSets) return;
+                          setExercises(prev=>prev.map(x=>x.id===ex.id?{...x,sets:x.sets-1}:x));
+                        }} style={{width:24,height:24,borderRadius:5,border:"none",
+                          background:ex.sets<=Math.max(1,loggedSets.length)?"transparent":"#1a1a1a",
+                          color:ex.sets<=Math.max(1,loggedSets.length)?"#1a1a1a":"#888",
+                          cursor:ex.sets<=Math.max(1,loggedSets.length)?"default":"pointer",
+                          fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>−</button>
+                        <div style={{color:"#666",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                          letterSpacing:1,minWidth:40,textAlign:"center"}}>{loggedSets.length}/{ex.sets} SETS</div>
+                        <button onClick={()=>{
+                          setExercises(prev=>prev.map(x=>x.id===ex.id?{...x,sets:x.sets+1}:x));
+                        }} style={{width:24,height:24,borderRadius:5,border:"none",
+                          background:"#1a1a1a",color:"#888",cursor:"pointer",
+                          fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>+</button>
+                      </div>
                       <button onClick={e=>{e.stopPropagation();skipExercise(ex.id);}}
                         style={{background:"#1a1a0a",border:"1px solid #3a3a1a",borderRadius:7,
                           color:"#888",padding:"4px 10px",cursor:"pointer",fontSize:10,
@@ -3588,6 +3648,27 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                   />
                 </div>
               )}
+              {/* Add extra set beyond programmed count */}
+              {isActive&&done&&!editingSet&&(
+                <div style={{borderTop:`1px solid ${C}22`,padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                  {ex._addingExtra ? (
+                    <SetInput color={C} setNum={loggedSets.length+1} totalSets={loggedSets.length+1} ex={ex}
+                      prevSet={loggedSets[loggedSets.length-1]}
+                      recWeight={null}
+                      lastReps={null}
+                      onLog={logSet}
+                      useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
+                  ) : (
+                    <button onClick={e=>{e.stopPropagation();setExercises(prev=>prev.map(x=>x.id===ex.id?{...x,_addingExtra:true}:x));}}
+                      style={{width:"100%",background:`${C}0a`,border:`1px dashed ${C}44`,borderRadius:10,
+                        padding:"10px",cursor:"pointer",color:C,fontSize:11,
+                        fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,fontWeight:700,
+                        transition:"all 0.15s"}}>
+                      + ADD EXTRA SET ({loggedSets.length}/{ex.sets} done)
+                    </button>
+                  )}
+                </div>
+              )}
               {/* Edit modal for non-active exercises */}
               {!isActive&&editingSet?.exId===ex.id&&(
                 <div style={{borderTop:`1px solid ${C}22`,padding:"12px 14px"}}>
@@ -3599,6 +3680,71 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                     onDelete={()=>deleteSet(ex.id,editingSet.si)}
                     onCancel={()=>setEditingSet(null)}
                   />
+                </div>
+              )}
+              {/* Mid-session superset controls */}
+              {isActive&&(
+                <div style={{padding:"4px 14px 8px",display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {exIdx>0 && !ex.groupId && !exercises[exIdx-1]?.groupId && (
+                    <button onClick={e=>{e.stopPropagation();
+                      const above=exercises[exIdx-1];
+                      const gid=mkId();
+                      setExercises(prev=>prev.map(x=>
+                        x.id===above.id?{...x,groupId:gid}:
+                        x.id===ex.id?{...x,groupId:gid}:x));
+                    }} style={{background:"#0d0d0d",border:`1px dashed ${C}44`,borderRadius:7,
+                      color:`${C}88`,padding:"3px 8px",cursor:"pointer",fontSize:9,
+                      fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                      🔗 SUPERSET WITH ABOVE
+                    </button>
+                  )}
+                  {exIdx>0 && !ex.groupId && exercises[exIdx-1]?.groupId && (
+                    <button onClick={e=>{e.stopPropagation();
+                      const gid=exercises[exIdx-1].groupId;
+                      const label=exercises[exIdx-1].groupLabel||"";
+                      setExercises(prev=>prev.map(x=>x.id===ex.id?{...x,groupId:gid,groupLabel:label}:x));
+                    }} style={{background:`${C}12`,border:`1px solid ${C}44`,borderRadius:7,
+                      color:C,padding:"3px 8px",cursor:"pointer",fontSize:9,
+                      fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                      🔗 JOIN "{exercises[exIdx-1].groupLabel||"SUPERSET"}"
+                    </button>
+                  )}
+                  {/* Show all available supersets to join */}
+                  {!ex.groupId && (()=>{
+                    const groups={};
+                    exercises.forEach(e=>{if(e.groupId && e.id!==ex.id){
+                      if(!groups[e.groupId]) groups[e.groupId]={label:e.groupLabel||"Superset",gid:e.groupId};
+                    }});
+                    const uniqueGroups=Object.values(groups);
+                    // Only show if there are groups beyond the adjacent one
+                    const adjacentGid=exercises[exIdx-1]?.groupId;
+                    const otherGroups=uniqueGroups.filter(g=>g.gid!==adjacentGid);
+                    return otherGroups.map(g=>(
+                      <button key={g.gid} onClick={e=>{e.stopPropagation();
+                        setExercises(prev=>prev.map(x=>x.id===ex.id?{...x,groupId:g.gid,groupLabel:g.label}:x));
+                      }} style={{background:"#0d0d0d",border:`1px dashed ${C}33`,borderRadius:7,
+                        color:`${C}66`,padding:"3px 8px",cursor:"pointer",fontSize:9,
+                        fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                        🔗 JOIN "{g.label}"
+                      </button>
+                    ));
+                  })()}
+                  {inGroup && (
+                    <button onClick={e=>{e.stopPropagation();
+                      const gid=ex.groupId;
+                      setExercises(prev=>{
+                        const updated=prev.map(x=>x.id===ex.id?{...x,groupId:null,groupLabel:null}:x);
+                        // If only 1 left in group, unlink that too
+                        const remaining=updated.filter(x=>x.groupId===gid);
+                        if(remaining.length===1) return updated.map(x=>x.groupId===gid?{...x,groupId:null,groupLabel:null}:x);
+                        return updated;
+                      });
+                    }} style={{background:"#1a0a0a",border:"1px solid #3a1a1a",borderRadius:7,
+                      color:"#884444",padding:"3px 8px",cursor:"pointer",fontSize:9,
+                      fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                      UNLINK
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -3940,11 +4086,10 @@ function SetInput({ color, setNum, totalSets, ex, prevSet, recWeight=null, lastR
 }
 
 // ─── Inline Rest Timer ────────────────────────────────────────────────────────
-function InlineTimer({ duration, color, onDone, onSkip }) {
+function InlineTimer({ duration, color, onDone, onSkip, nextEx, nextRec, nextLastData, nextWeightKg, nextPlates, nextSetsLogged, useKg }) {
   const [t,setT]=useState(duration);
   const onDoneRef=useRef(onDone);
   const activeRef=useRef(true);
-  // Keep onDoneRef current without re-running the effect
   useEffect(()=>{ onDoneRef.current=onDone; });
 
   useEffect(()=>{
@@ -3953,7 +4098,6 @@ function InlineTimer({ duration, color, onDone, onSkip }) {
       setT(v=>{
         const next=v-1;
         if(next<=0){
-          // Schedule the callback after this render via setTimeout
           setTimeout(()=>{ if(activeRef.current) onDoneRef.current(); },0);
           return 0;
         }
@@ -3964,28 +4108,99 @@ function InlineTimer({ duration, color, onDone, onSkip }) {
     return()=>{ clearInterval(id); activeRef.current=false; };
   },[]);
   const pct=((duration-t)/duration)*100;
-  const r=52,circ=2*Math.PI*r;
+  const r=42,circ=2*Math.PI*r;
+  const PLATE_COLORS = {45:"#FF6B35",35:"#00D4FF",25:"#A8FF3E",10:"#888",5:"#aaa",2.5:"#555",0.5:"#444"};
+
+  const displayWeight = nextWeightKg
+    ? (useKg ? parseFloat(nextWeightKg.toFixed(1)) : parseFloat((nextWeightKg*2.20462).toFixed(1)))
+    : null;
+
   return (
     <div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(0,0,0,0.94)",
       backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",
-      alignItems:"center",justifyContent:"center",gap:20}}>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,letterSpacing:6,color:"#2a2a2a"}}>REST TIME</div>
-      <div style={{position:"relative",width:136,height:136}}>
-        <svg width="136" height="136" style={{transform:"rotate(-90deg)"}}>
-          <circle cx="68" cy="68" r={r} fill="none" stroke="#1a1a1a" strokeWidth="5"/>
-          <circle cx="68" cy="68" r={r} fill="none" stroke={color} strokeWidth="5"
+      alignItems:"center",justifyContent:"center",gap:14,padding:"16px 20px",
+      overflowY:"auto"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:12,letterSpacing:6,color:"#2a2a2a"}}>REST</div>
+      <div style={{position:"relative",width:108,height:108}}>
+        <svg width="108" height="108" style={{transform:"rotate(-90deg)"}}>
+          <circle cx="54" cy="54" r={r} fill="none" stroke="#1a1a1a" strokeWidth="4"/>
+          <circle cx="54" cy="54" r={r} fill="none" stroke={color} strokeWidth="4"
             strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)}
             strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
         </svg>
         <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:44,color,lineHeight:1}}>{fmtTime(t)}</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color,lineHeight:1}}>{fmtTime(t)}</div>
         </div>
       </div>
-      <div style={{display:"flex",gap:10}}>
+      <div style={{display:"flex",gap:8}}>
         <Btn label="+30s" size="sm" bg="#1a1a1a" color="#777" border="#252525" onClick={()=>setT(v=>v+30)}/>
         <Btn label="SKIP ▶" size="sm" bg={color} color="#000" onClick={onSkip}/>
       </div>
-      <div style={{color:"#222",fontSize:10,letterSpacing:2}}>AUTO-ADVANCES WHEN DONE</div>
+
+      {/* Next exercise preview */}
+      {nextEx && (
+        <div style={{width:"100%",maxWidth:320,background:"#111",border:`1px solid ${color}33`,
+          borderRadius:14,padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{color:"#555",fontSize:9,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>UP NEXT</div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",
+                letterSpacing:2,lineHeight:1,marginTop:2}}>{nextEx.name}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{color:"#555",fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                SET {nextSetsLogged+1}/{nextEx.sets}
+              </div>
+              <div style={{color:"#333",fontSize:10}}>{nextEx.reps} reps · {nextEx.rest}s rest</div>
+            </div>
+          </div>
+
+          {/* Weight suggestion */}
+          {displayWeight > 0 && (
+            <div style={{background:"#0d0d0d",borderRadius:10,padding:"10px 12px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color,lineHeight:1}}>
+                    {displayWeight}
+                  </div>
+                  <div style={{color:"#555",fontSize:12}}>{useKg?"kg":"lbs"}</div>
+                </div>
+                {nextRec && (
+                  <div style={{background:`${color}18`,border:`1px solid ${color}33`,borderRadius:6,
+                    padding:"3px 8px",fontSize:9,color,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:1}}>
+                    {nextRec.kg > nextRec.lastKg ? "↑ PROGRESSION" : "LAST SESSION"}
+                  </div>
+                )}
+                {!nextRec && nextLastData && (
+                  <div style={{color:"#333",fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                    LAST: {nextLastData.reps} reps {nextLastData.rpe>0?`@ RPE ${nextLastData.rpe}`:""}
+                  </div>
+                )}
+              </div>
+
+              {/* Plate breakdown */}
+              {nextPlates.length > 0 && (
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <div style={{color:"#333",fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",
+                    flexShrink:0}}>PLATES:</div>
+                  {nextPlates.map((p,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:3}}>
+                      <div style={{background:PLATE_COLORS[p.weight]||"#555",borderRadius:4,
+                        padding:"2px 6px",fontSize:11,fontFamily:"'Bebas Neue',sans-serif",
+                        color:p.weight>=25?"#000":"#ddd",letterSpacing:1}}>
+                        {p.weight}
+                      </div>
+                      {p.count>1&&<span style={{color:"#444",fontSize:10}}>×{p.count}</span>}
+                    </div>
+                  ))}
+                  <div style={{color:"#2a2a2a",fontSize:9,marginLeft:4}}>each side</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -4851,15 +5066,14 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                   function linkAbove(){
                     const above = day.exercises[i-1];
                     const gid = above.groupId || mkId();
-                    upEx(day.id, above.id, {groupId:gid});
-                    upEx(day.id, ex.id, {groupId:gid});
+                    const label = above.groupLabel || "";
+                    upEx(day.id, above.id, {groupId:gid, groupLabel:label});
+                    upEx(day.id, ex.id, {groupId:gid, groupLabel:label});
                   }
                   function unlink(){
-                    // Remove this exercise from its group
-                    upEx(day.id, ex.id, {groupId:null});
-                    // If only 1 left in group, unlink that too
+                    upEx(day.id, ex.id, {groupId:null, groupLabel:null});
                     const remaining = day.exercises.filter(e=>e.groupId===ex.groupId && e.id!==ex.id);
-                    if(remaining.length===1) upEx(day.id, remaining[0].id, {groupId:null});
+                    if(remaining.length===1) upEx(day.id, remaining[0].id, {groupId:null, groupLabel:null});
                   }
 
                   return (
@@ -4883,7 +5097,7 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                           <div style={{color:C,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
                             fontWeight:700,letterSpacing:2,padding:"2px 10px",
                             background:`${C}18`,border:`1px solid ${C}33`,borderRadius:6}}>
-                            SUPERSET
+                            {ex.groupLabel||"SUPERSET"}
                           </div>
                           <div style={{flex:1,height:2,background:`${C}44`,borderRadius:2}}/>
                         </div>
@@ -4896,10 +5110,16 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                         {isGroupStart && (
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                             <span style={{fontSize:12}}>🔗</span>
-                            <div style={{color:C,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
-                              fontWeight:700,letterSpacing:2}}>
-                              SUPERSET · {groupMembers.length} EXERCISES
-                            </div>
+                            <TouchTextInput
+                              value={ex.groupLabel||""}
+                              onChange={v=>{
+                                // Update groupLabel on all members of this group
+                                groupMembers.forEach(m=>upEx(day.id,m.id,{groupLabel:v}));
+                              }}
+                              placeholder="Superset name (e.g. Chest/Tri)"
+                              color={C}/>
+                            <div style={{color:`${C}88`,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",
+                              letterSpacing:1,flexShrink:0}}>{groupMembers.length} EX</div>
                           </div>
                         )}
                         {/* Move up/down + exercise editor */}
