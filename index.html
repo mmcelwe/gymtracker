@@ -2883,20 +2883,25 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setTimer(null);
 
     if(sessionMode==="circuit"){
-      // Circuit: advance to next exercise (or group) that still has sets remaining (wrap around)
+      // Circuit: advance to next exercise that still has sets remaining
+      // Always scan from current+1, wrapping around to the beginning
       const idx = exercises.findIndex(e=>e.id===currentExId);
       const len = exercises.length;
-      const visited = new Set();
+      
+      // First pass: find next incomplete exercise after current, wrapping around
       for(let offset=1; offset<=len; offset++){
-        const next = exercises[(idx+offset)%len];
-        // Skip exercises in the same group as current (superset just finished its round)
-        const curGroup = currentEx?.groupId;
+        const nextIdx = (idx+offset)%len;
+        const next = exercises[nextIdx];
+        
+        // Skip exercises in the same superset group (they advance together within logSet)
+        const curGroup = exercises[idx]?.groupId;
         if(curGroup && next.groupId===curGroup) continue;
-        if(visited.has(next.groupId||next.id)) continue;
-        visited.add(next.groupId||next.id);
-        if(!isExDone(next)){
+        
+        // Check if this exercise still needs sets
+        const setsLogged = (logged[next.id]||[]).filter(Boolean).length;
+        if(setsLogged < next.sets){
           setCurrentExId(next.id);
-          setSetIdx((logged[next.id]||[]).filter(Boolean).length);
+          setSetIdx(setsLogged);
           return;
         }
       }
@@ -3337,14 +3342,13 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         if(sessionMode==="circuit"){
           const idx = exercises.findIndex(e=>e.id===currentExId);
           const len = exercises.length;
-          const visited = new Set();
           for(let offset=1; offset<=len; offset++){
-            const next = exercises[(idx+offset)%len];
-            const curGroup = currentEx?.groupId;
+            const nextIdx = (idx+offset)%len;
+            const next = exercises[nextIdx];
+            const curGroup = exercises[idx]?.groupId;
             if(curGroup && next.groupId===curGroup) continue;
-            if(visited.has(next.groupId||next.id)) continue;
-            visited.add(next.groupId||next.id);
-            if(!isExDone(next)){ nextPreview=next; break; }
+            const setsLogged = (logged[next.id]||[]).filter(Boolean).length;
+            if(setsLogged < next.sets){ nextPreview=next; break; }
           }
         } else {
           // Traditional mode:
