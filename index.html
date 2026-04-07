@@ -3708,7 +3708,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                         <span style={{fontSize:12}}>📈</span>
                         <span style={{color:C,fontFamily:"'Bebas Neue',sans-serif",fontSize:16,letterSpacing:1}}>{dispRec}</span>
                         <span style={{color:"#3a3a3a",fontSize:10}}>
-                          {progType==="pct"?`+${progVal}%`:`+${progVal} lbs`} from {dispLast}
+                          {progType==="pct"?`+${progVal}%`:`+${progVal} ${useKg?"kg":"lbs"}`} from {dispLast}
                           {rec.lastRpe>0&&<span style={{color:"#555"}}> · RPE {rec.lastRpe}</span>}
                         </span>
                       </div>
@@ -5073,10 +5073,15 @@ function UserEditModal({ user, onSave, onClose, isNew=false }) {
               BODY FAT % <span style={{color:"#2a2a2a",fontWeight:400,letterSpacing:1}}>— optional, improves calorie accuracy</span>
             </div>
             <TouchNumInput label="" value={bodyFatPct} onChange={setBodyFatPct} color={color} unit="%" min={1} max={60} step={0.5}/>
-            {bodyFatPct>0&&weightKg&&<div style={{color:"#383838",fontSize:11,marginTop:6}}>
-              Lean mass: {parseFloat((parseFloat(weightKg)*(1-parseFloat(bodyFatPct)/100)).toFixed(1))} kg
-              {" · "}Fat mass: {parseFloat((parseFloat(weightKg)*parseFloat(bodyFatPct)/100).toFixed(1))} kg
-            </div>}
+            {bodyFatPct>0&&weightKg&&(()=>{
+              const lkg=parseFloat(weightKg)*(1-parseFloat(bodyFatPct)/100);
+              const fkg=parseFloat(weightKg)*parseFloat(bodyFatPct)/100;
+              const u=units==="us";
+              const fmt=v=>u?parseFloat((v*2.20462).toFixed(1))+" lbs":parseFloat(v.toFixed(1))+" kg";
+              return <div style={{color:"#383838",fontSize:11,marginTop:6}}>
+                Lean mass: {fmt(lkg)}{" · "}Fat mass: {fmt(fkg)}
+              </div>;
+            })()}
           </div>
 
           {/* Activity level */}
@@ -5365,6 +5370,7 @@ function ProgramEditor({ user, program, onSave, onBack }) {
                           </div>
                           <div style={{flex:1,minWidth:0}}>
                             <ExEditor key={ex.id} ex={ex} num={i+1} color={C}
+                              useKg={user.biometrics?.units!=="us"}
                               onUpdate={p=>upEx(day.id,ex.id,p)}
                               onDelete={()=>delEx(day.id,ex.id)}/>
                           </div>
@@ -5559,7 +5565,7 @@ function MusclePicker({ exName, color }) {
   );
 }
 
-function ExEditor({ ex, num, color, onUpdate, onDelete }) {
+function ExEditor({ ex, num, color, useKg=false, onUpdate, onDelete }) {
   return (
     <div style={{background:"#131313",border:"1px solid #1e1e1e",borderRadius:14,padding:"14px 16px"}}>
       <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
@@ -5608,13 +5614,13 @@ function ExEditor({ ex, num, color, onUpdate, onDelete }) {
             min={0} max={(ex.progression?.type||"fixed")==="pct"?50:100}
             step={(ex.progression?.type||"fixed")==="pct"?0.5:1}
             color={color}
-            unit={(ex.progression?.type||"fixed")==="pct"?"%":"lbs"}
+            unit={(ex.progression?.type||"fixed")==="pct"?"%":(useKg?"kg":"lbs")}
           />
           {parseFloat(ex.progression?.value)>0
             ? <div style={{color:"#555",fontSize:11,lineHeight:1.4}}>
                 Each session, suggest {(ex.progression?.type||"fixed")==="pct"
                   ? `+${ex.progression.value}% over last workout`
-                  : `+${ex.progression.value} lbs over last workout`}
+                  : `+${ex.progression.value} ${useKg?"kg":"lbs"} over last workout`}
               </div>
             : <div style={{color:"#2a2a2a",fontSize:11}}>Set to 0 to disable</div>
           }
@@ -6154,11 +6160,15 @@ function BiometricLogModal({ user, onSave, onClose }) {
           <div style={{background:"#0d0d0d",border:`1px solid ${C}22`,borderRadius:12,padding:"14px 16px",
             display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
             {leanMass&&<div style={{textAlign:"center"}}>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#F0F0F0",lineHeight:1}}>{leanMass}kg</div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#F0F0F0",lineHeight:1}}>
+                {useKg?leanMass:parseFloat((leanMass*2.20462).toFixed(1))}{useKg?" kg":" lbs"}
+              </div>
               <div style={{color:"#444",fontSize:10,letterSpacing:2,marginTop:3}}>LEAN MASS</div>
             </div>}
             {fatMass&&<div style={{textAlign:"center"}}>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#888",lineHeight:1}}>{fatMass}kg</div>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:"#888",lineHeight:1}}>
+                {useKg?fatMass:parseFloat((fatMass*2.20462).toFixed(1))}{useKg?" kg":" lbs"}
+              </div>
               <div style={{color:"#444",fontSize:10,letterSpacing:2,marginTop:3}}>FAT MASS</div>
             </div>}
             {bmrPreview&&<div style={{textAlign:"center",gridColumn:leanMass?"":"1/-1"}}>
@@ -6325,7 +6335,9 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                     </div>
                     {latest?.bodyFatPct&&latest?.weightKg&&(
                       <div style={{color:"#333",fontSize:10,marginTop:3}}>
-                        Lean: {parseFloat((parseFloat(latest.weightKg)*(1-parseFloat(latest.bodyFatPct)/100)).toFixed(1))}kg
+                        Lean: {useKgDisp
+                          ? parseFloat((parseFloat(latest.weightKg)*(1-parseFloat(latest.bodyFatPct)/100)).toFixed(1))+"kg"
+                          : parseFloat((parseFloat(latest.weightKg)*(1-parseFloat(latest.bodyFatPct)/100)*2.20462).toFixed(1))+" lbs"}
                       </div>
                     )}
                   </div>
@@ -6701,7 +6713,7 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                           {goal && (
                             <div style={{background:"#141414",border:`1px solid #222`,borderRadius:12,padding:"14px 16px",marginBottom:4}}>
                               <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                                <div style={{color:"#555",fontSize:11,letterSpacing:2}}>GOAL: {goal.weight} × {goal.reps} reps</div>
+                                <div style={{color:"#555",fontSize:11,letterSpacing:2}}>GOAL: {wtDisplay(goal.weight,useKg)} × {goal.reps} reps</div>
                                 <div style={{color:goalPct>=100?"#A8FF3E":C,fontFamily:"'Bebas Neue',sans-serif",fontSize:18}}>{goalPct}%</div>
                               </div>
                               <div style={{background:"#1e1e1e",borderRadius:6,height:8,overflow:"hidden"}}>
