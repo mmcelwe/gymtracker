@@ -2573,6 +2573,8 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const dragSrc=useState(null);
   const [editingSet,setEditingSet]=useState(null); // {exId, setIdx} or null
   const sessionKeyRef=useRef(null); // unique key for this session, set on first finish
+  const totalRestMsRef=useRef(0);   // accumulated rest milliseconds (excluded from calorie calc)
+  const restStartRef=useRef(null);  // timestamp when current rest timer began
   const [sessionMode,setSessionMode]=useState("traditional"); // "traditional" | "circuit"
   const [exerciseNotes,setExerciseNotes]=useState({}); // keyed by exercise id
   const [isFreestyle,setIsFreestyle]=useState(false);
@@ -2733,7 +2735,9 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   function handleLeave(){
     let stats = sessionStats;
     if(!stats && phase==="active" && startTime){
-      const durationMin = Math.max(1, Math.round((Date.now()-startTime)/60000));
+      flushRestTimer();
+      const activeMs = Math.max(0, (Date.now()-startTime) - totalRestMsRef.current);
+      const durationMin = Math.max(1, Math.round(activeMs/60000));
       const allSets = Object.values(logged).flat().filter(Boolean);
       const rpeSets = allSets.filter(s=>s?.rpe>0);
       const avgRpe = rpeSets.length ? rpeSets.reduce((a,s)=>a+s.rpe,0)/rpeSets.length : null;
@@ -2900,6 +2904,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     }
 
     // Not in a superset, or superset round complete → rest timer
+    restStartRef.current = Date.now();
     setTimer({dur:currentEx.rest, key:Date.now()});
   }
 
@@ -2996,7 +3001,12 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setInsertAtIdx(null);
   }
 
+  function flushRestTimer(){
+    if(restStartRef.current){ totalRestMsRef.current += Date.now()-restStartRef.current; restStartRef.current=null; }
+  }
+
   function skipToNext(){
+    flushRestTimer();
     setTimer(null);
 
     if(sessionMode==="circuit"){
@@ -3035,6 +3045,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   }
 
   function selectEx(id){
+    flushRestTimer();
     setTimer(null);
     setCurrentExId(id);
     setSetIdx((logged[id]||[]).filter(Boolean).length);
@@ -3050,7 +3061,10 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       const sets=(logged[ex.id]||[]).filter(Boolean);
       if(sets.length) namedLog[ex.name]=sets;
     });
-    const durationMin=startTime?Math.round((Date.now()-startTime)/60000):null;
+    flushRestTimer(); // capture any in-progress rest
+    const totalMs = startTime ? Date.now()-startTime : 0;
+    const activeMs = Math.max(0, totalMs - totalRestMsRef.current);
+    const durationMin = startTime ? Math.max(1, Math.round(activeMs/60000)) : null;
     const allSets=Object.values(namedLog).flat().filter(Boolean);
     const rpeSets=allSets.filter(s=>s?.rpe>0);
     const avgRpe=rpeSets.length?rpeSets.reduce((a,s)=>a+s.rpe,0)/rpeSets.length:null;
@@ -3097,7 +3111,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     const stats=leaveStats[0]||{};
     const items=[
       ts>0&&{icon:"💪",v:ts,l:"SETS LOGGED"},
-      stats.durationMin&&{icon:"⏱",v:stats.durationMin+"m",l:"TIME"},
+      stats.durationMin&&{icon:"⏱",v:stats.durationMin+"m",l:"ACTIVE TIME"},
       stats.calories&&{icon:"🔥",v:stats.calories,l:"KCAL BURNED"},
       stats.avgRpe&&{icon:"⚡",v:"RPE "+stats.avgRpe,l:"AVG EFFORT"},
     ].filter(Boolean);
@@ -3334,7 +3348,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     const hasBio=user.biometrics?.weightKg&&user.biometrics?.age;
     const statItems=[
       {v:ts,l:"SETS"},
-      sessionStats?.durationMin&&{v:sessionStats.durationMin+"m",l:"TIME"},
+      sessionStats?.durationMin&&{v:sessionStats.durationMin+"m",l:"ACTIVE TIME"},
       sessionStats?.calories&&{v:sessionStats.calories,l:"KCAL 🔥"},
       sessionStats?.avgRpe&&{v:"RPE "+sessionStats.avgRpe,l:"AVG EFFORT"},
     ].filter(Boolean);
@@ -4194,14 +4208,14 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                       {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
                       {" · "}{ts} sets · {exNames.length} exercises
                     </div>
-                    {sess.durationMin&&<div style={{color:"#333",fontSize:11,marginTop:1}}>
-                      {sess.durationMin}m {sess.calories?`· 🔥${sess.calories} kcal`:""} {sess.avgRpe?`· RPE ${sess.avgRpe}`:""}
-                    </div>}
+                    <div style={{color:"#333",fontSize:11,marginTop:1}}>
+                      ⏱ {sess.durationMin ? `${sess.durationMin}m active` : "—"}{sess.calories?` · 🔥${sess.calories} kcal`:""}{sess.avgRpe?` · RPE ${sess.avgRpe}`:""}
+                    </div>
                     {sess.notes&&<div style={{marginTop:4,color:"#383838",fontSize:11,
                       fontStyle:"italic",lineHeight:1.4}}>"{sess.notes}"</div>}
                   </div>
                   <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>setEditingSession(isEditing?null:{date,originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
+                    <button onClick={()=>setEditingSession(isEditing?null:{date:sess.date||dateOf(date),originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
                       style={{background:`${u.color}1a`,border:`1px solid ${u.color}44`,borderRadius:9,
                         color:u.color,padding:"8px 14px",cursor:"pointer",
                         fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2}}>
@@ -4262,6 +4276,52 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                           {" → "}{new Date(editingSession.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                         </div>
                       )}
+                    </div>
+
+                    {/* Duration editor */}
+                    <div style={{background:"#0a0a0a",border:`1px solid ${u.color}22`,borderRadius:12,padding:"12px 14px"}}>
+                      <div style={{color:"#444",fontSize:10,letterSpacing:3,marginBottom:10,
+                        fontFamily:"'Barlow Condensed',sans-serif"}}>ACTIVE TIME (EXCL. REST)</div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <button onClick={()=>{
+                          const cur=editingSession.sess.durationMin||0;
+                          const next=Math.max(1,cur-1);
+                          const cal=calcCalories(u.biometrics,next,editingSession.sess.avgRpe);
+                          setEditingSession(s=>({...s,sess:{...s.sess,durationMin:next,calories:cal}}));
+                        }} style={{width:44,height:44,borderRadius:10,background:"#1a1a1a",
+                          border:`1px solid ${u.color}33`,color:u.color,fontSize:22,
+                          cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                        <div style={{flex:1,textAlign:"center"}}>
+                          <div style={{display:"flex",alignItems:"baseline",justifyContent:"center",gap:6}}>
+                            <input type="number" min="1" max="300"
+                              value={editingSession.sess.durationMin||""}
+                              onChange={e=>{
+                                const next=Math.max(1,parseInt(e.target.value)||1);
+                                const cal=calcCalories(u.biometrics,next,editingSession.sess.avgRpe);
+                                setEditingSession(s=>({...s,sess:{...s.sess,durationMin:next,calories:cal}}));
+                              }}
+                              style={{width:64,background:"#111",border:`1px solid ${u.color}33`,
+                                borderRadius:8,color:"#F0F0F0",fontSize:22,padding:"6px 8px",
+                                outline:"none",textAlign:"center",fontFamily:"'Bebas Neue',sans-serif",
+                                letterSpacing:1}}/>
+                            <span style={{color:"#444",fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>MIN</span>
+                          </div>
+                          {editingSession.sess.calories&&(
+                            <div style={{color:`${u.color}88`,fontSize:11,marginTop:4,
+                              fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                              🔥 {editingSession.sess.calories} kcal
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={()=>{
+                          const cur=editingSession.sess.durationMin||0;
+                          const next=Math.min(300,cur+1);
+                          const cal=calcCalories(u.biometrics,next,editingSession.sess.avgRpe);
+                          setEditingSession(s=>({...s,sess:{...s.sess,durationMin:next,calories:cal}}));
+                        }} style={{width:44,height:44,borderRadius:10,background:"#1a1a1a",
+                          border:`1px solid ${u.color}33`,color:u.color,fontSize:22,
+                          cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                      </div>
                     </div>
 
                     {/* Per-exercise set editor */}
