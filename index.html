@@ -5797,7 +5797,9 @@ function ChartTab({ exHistory, allExerciseNames, sessions, history, color, bio, 
   // Exercise chart data
   const exData = chartEx ? (exHistory[chartEx]||[]).map(e=>({
     x: e.date,
-    y: chartMetric==="best" ? (parseFloat(e.best?.weight)||(useImperial?e.best?.weight:0)||0) : Math.round(useImperial ? e.vol*2.20462 : e.vol)
+    y: chartMetric==="best"
+      ? parseFloat((useImperial ? (parseFloat(e.best?.weight)||0)*2.20462 : (parseFloat(e.best?.weight)||0)).toFixed(1))
+      : Math.round(useImperial ? e.vol*2.20462 : e.vol)
   })).filter(d=>d.y>0) : [];
 
   const periodBtn=(p,l)=>(
