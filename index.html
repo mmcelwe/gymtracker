@@ -47,7 +47,7 @@ const todayIsoLocal = () => localDateStr(new Date());
 const getDays = d => Array.isArray(d.days) ? d.days : d.day ? [d.day] : [];
 
 // Returns YYYY-MM-DD for Monday of the current week
-function weekStart() {
+function naturalMonday() {
   const now = new Date();
   const day = now.getDay(); // 0=Sun
   const diff = (day === 0 ? -6 : 1 - day);
@@ -56,22 +56,46 @@ function weekStart() {
   return localDateStr(mon);
 }
 
+// Returns the effective week start — Monday by default, but an athlete can
+// "close out" their week early. The override is stored in localStorage and
+// auto-expires once the next natural Monday arrives.
+function weekStart(uid) {
+  const nm = naturalMonday();
+  try {
+    const key = uid ? `gft-week-override-${uid}` : "gft-week-override";
+    const override = localStorage.getItem(key);
+    if (override && override > nm) return override;
+  } catch {}
+  return nm;
+}
+
+// Set today as the manual week start for a specific athlete
+function closeWeekNow(uid) {
+  const today = new Date().toISOString().split("T")[0];
+  try { localStorage.setItem(`gft-week-override-${uid}`, today); } catch {}
+}
+
+// Clear the manual override for a specific athlete
+function clearWeekOverride(uid) {
+  try { localStorage.removeItem(`gft-week-override-${uid}`); } catch {}
+}
+
 // How many sessions of a named day were logged this week
 // Session keys: "YYYY-MM-DD" for old sessions, "YYYY-MM-DD_timestamp" for new ones
 // dateOf() extracts just the date portion from any key format
 function dateOf(key) { return key ? key.split("_")[0] : ""; }
 
-function sessionsThisWeek(dayLabel, history) {
-  const ws = weekStart();
+function sessionsThisWeek(dayLabel, history, uid) {
+  const ws = weekStart(uid);
   return Object.entries(history||{})
     .filter(([key, sess]) => dateOf(key) >= ws && sess?.day === dayLabel)
     .length;
 }
 
 // Is a frequency-mode day "available" this week (hasn't hit target yet)
-function freqAvailable(day, history) {
+function freqAvailable(day, history, uid) {
   if(day.scheduleType !== "frequency") return false;
-  return sessionsThisWeek(day.label, history) < (day.timesPerWeek||3);
+  return sessionsThisWeek(day.label, history, uid) < (day.timesPerWeek||3);
 }
 
 // ── Unit conversions (metric ↔ US) ──────────────────────────────────────────
@@ -614,15 +638,13 @@ function normalizeExName(name) {
   return (name||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();
 }
 
-function getMuscleSplit(exerciseName) {
+// DB-only lookup with fuzzy matching — does NOT check user overrides
+function getDbMuscleSplit(exerciseName) {
   const norm = normalizeExName(exerciseName);
-  // Exact match
   if(EXERCISE_MUSCLE_MAP[norm]) return EXERCISE_MUSCLE_MAP[norm];
-  // Partial match — check if any key is contained in the name or vice versa
   for(const [key, map] of Object.entries(EXERCISE_MUSCLE_MAP)){
     if(norm.includes(key) || key.includes(norm)) return map;
   }
-  // Word overlap match — find best matching key
   const normWords = norm.split(" ").filter(w=>w.length>2);
   let bestKey=null, bestScore=0;
   for(const key of Object.keys(EXERCISE_MUSCLE_MAP)){
@@ -631,8 +653,29 @@ function getMuscleSplit(exerciseName) {
     const score = overlap / Math.max(normWords.length, keyWords.length);
     if(score > bestScore && score >= 0.4){ bestScore=score; bestKey=key; }
   }
-  if(bestKey) return EXERCISE_MUSCLE_MAP[bestKey];
-  return null; // unknown exercise
+  return bestKey ? EXERCISE_MUSCLE_MAP[bestKey] : null;
+}
+
+// Read/write user-defined muscle overrides from localStorage
+function getCustomMuscleSplit(exerciseName) {
+  try {
+    const map = JSON.parse(localStorage.getItem("gft-ex-muscles")||"{}");
+    return map[normalizeExName(exerciseName)] || null;
+  } catch { return null; }
+}
+function setCustomMuscleSplit(exerciseName, muscles) {
+  try {
+    const map = JSON.parse(localStorage.getItem("gft-ex-muscles")||"{}");
+    const key = normalizeExName(exerciseName);
+    if(muscles && Object.keys(muscles).length > 0) map[key] = muscles;
+    else delete map[key];
+    localStorage.setItem("gft-ex-muscles", JSON.stringify(map));
+  } catch {}
+}
+
+// Public: custom override first, then fuzzy DB lookup
+function getMuscleSplit(exerciseName) {
+  return getCustomMuscleSplit(exerciseName) || getDbMuscleSplit(exerciseName);
 }
 
 // ── Calculate Weekly Muscle Stimulus ─────────────────────────────────────────
@@ -830,7 +873,7 @@ function MuscleMapTab({ history, color, user }) {
   const [viewSide, setViewSide] = useState("front");
   const sex = user.biometrics?.sex || "male";
 
-  const ws = weekStart();
+  const ws = weekStart(user.id);
   const muscleData = calcWeeklyMuscleData(history, ws);
 
   // Sort muscles by stimulus for the detail list
@@ -1807,7 +1850,23 @@ function TouchNumInput({ value, onChange, color, label, unit="", min=0, step=1 }
 // ══════════════════════════════════════════════════════════════════════════════
 function HomeScreen({ users, programs, history, onStartSession, onManage }) {
   const [sel,setSel]=useState([]);
+  const [closeWeekUid,setCloseWeekUid]=useState(null); // uid of athlete whose modal is open
+  const [weekKey,setWeekKey]=useState(0); // bumped to force re-render after close/undo
   const toggle=id=>setSel(s=>s.includes(id)?s.filter(x=>x!==id):s.length<3?[...s,id]:s);
+
+  const nm = naturalMonday();
+  const todayDate = new Date().toISOString().split("T")[0];
+
+  function handleCloseWeek(uid) {
+    closeWeekNow(uid);
+    setWeekKey(k=>k+1);
+    setCloseWeekUid(null);
+  }
+  function handleUndoClose(uid) {
+    clearWeekOverride(uid);
+    setWeekKey(k=>k+1);
+  }
+
   return (
     <div style={{minHeight:"100vh",background:"#080808",display:"flex",flexDirection:"column",
       alignItems:"center",justifyContent:"center",gap:44,padding:48,position:"relative"}}>
@@ -1840,33 +1899,61 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
           const s=sel.includes(u.id);
           const prog=programs[u.id];
           const userHist=history[u.id]||{};
-          const today=prog?.days?.find(d=>d.scheduleType==="frequency"?freqAvailable(d,userHist):getDays(d).includes(todayStr()));
+          const ws=weekStart(u.id);
+          const isOverridden=ws>nm;
+          const closedToday=isOverridden&&ws===todayDate;
+          const today=prog?.days?.find(d=>d.scheduleType==="frequency"?freqAvailable(d,userHist,u.id):getDays(d).includes(todayStr()));
           const total=Object.keys(history[u.id]||{}).length;
+          const wsDisplay=new Date(ws+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
           return (
-            <button key={u.id} onClick={()=>toggle(u.id)} style={{
-              background:s?`${u.color}18`:"rgba(255,255,255,0.04)",
-              border:`3px solid ${s?u.color:"#1e1e1e"}`,
-              borderRadius:24,padding:"38px 46px",cursor:"pointer",
-              display:"flex",flexDirection:"column",alignItems:"center",gap:18,
-              transition:"all 0.2s",minWidth:200,position:"relative",
-              boxShadow:s?`0 0 40px ${u.color}33`:"none"}}>
-              {s&&<div style={{position:"absolute",top:14,right:14,background:u.color,color:"#000",
-                borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",
-                justifyContent:"center",fontWeight:900,fontSize:16}}>✓</div>}
-              <div style={{width:90,height:90,borderRadius:"50%",background:`${u.color}1a`,
-                border:`3px solid ${s?u.color:u.color+"55"}`,display:"flex",alignItems:"center",
-                justifyContent:"center",fontSize:42}}>{u.emoji}</div>
-              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:40,color:u.color,letterSpacing:3}}>{u.name}</div>
-              <div style={{textAlign:"center"}}>
-                <div style={{color:"#555",fontSize:13,letterSpacing:1}}>{prog?.name}</div>
-                <div style={{color:today?"#888":"#3a3a3a",fontSize:13,marginTop:4}}>
+            <div key={u.id} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+              <button onClick={()=>toggle(u.id)} style={{
+                background:s?`${u.color}18`:"rgba(255,255,255,0.04)",
+                border:`3px solid ${s?u.color:"#1e1e1e"}`,
+                borderRadius:24,padding:"38px 46px",cursor:"pointer",
+                display:"flex",flexDirection:"column",alignItems:"center",gap:18,
+                transition:"all 0.2s",minWidth:200,position:"relative",
+                boxShadow:s?`0 0 40px ${u.color}33`:"none"}}>
+                {s&&<div style={{position:"absolute",top:14,right:14,background:u.color,color:"#000",
+                  borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",
+                  justifyContent:"center",fontWeight:900,fontSize:16}}>✓</div>}
+                <div style={{width:90,height:90,borderRadius:"50%",background:`${u.color}1a`,
+                  border:`3px solid ${s?u.color:u.color+"55"}`,display:"flex",alignItems:"center",
+                  justifyContent:"center",fontSize:42}}>{u.emoji}</div>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:40,color:u.color,letterSpacing:3}}>{u.name}</div>
+                <div style={{textAlign:"center"}}>
+                  <div style={{color:"#555",fontSize:13,letterSpacing:1}}>{prog?.name}</div>
+                  <div style={{color:today?"#888":"#3a3a3a",fontSize:13,marginTop:4}}>
                     {today?(today.scheduleType==="frequency"?
-                      `${today.label} (${sessionsThisWeek(today.label,userHist)}/${today.timesPerWeek||3} this week)`:
+                      `${today.label} (${sessionsThisWeek(today.label,userHist,u.id)}/${today.timesPerWeek||3} this week)`:
                       `Today: ${today.label}`):"Rest Day"}
                   </div>
-                <div style={{color:"#333",fontSize:12,marginTop:2}}>{total} sessions logged</div>
+                  <div style={{color:"#333",fontSize:12,marginTop:2}}>{total} sessions logged</div>
+                </div>
+              </button>
+              {/* Per-athlete week controls */}
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{color:"#252525",fontSize:10,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                  WEEK: {wsDisplay.toUpperCase()}
+                </div>
+                {isOverridden&&(
+                  <button onClick={()=>handleUndoClose(u.id)} style={{
+                    background:"none",border:"none",color:"#333",fontSize:10,letterSpacing:1,
+                    cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",padding:"1px 4px"}}
+                    onMouseEnter={e=>e.target.style.color="#666"}
+                    onMouseLeave={e=>e.target.style.color="#333"}>UNDO</button>
+                )}
               </div>
-            </button>
+              <button onClick={()=>setCloseWeekUid(u.id)} disabled={closedToday} style={{
+                background:"none",border:`1px solid ${closedToday?"#1a1a1a":"#252525"}`,borderRadius:7,
+                color:closedToday?"#1e1e1e":"#333",
+                fontFamily:"'Barlow Condensed',sans-serif",fontSize:10,letterSpacing:2,
+                padding:"4px 12px",cursor:closedToday?"default":"pointer",transition:"all 0.15s"}}
+                onMouseEnter={e=>{if(!closedToday){e.currentTarget.style.borderColor=u.color+"66";e.currentTarget.style.color=u.color+"99";}}}
+                onMouseLeave={e=>{if(!closedToday){e.currentTarget.style.borderColor="#252525";e.currentTarget.style.color="#333";}}}>
+                {closedToday?"WEEK CLOSED":"CLOSE WEEK"}
+              </button>
+            </div>
           );
         })}
       </div>
@@ -1877,6 +1964,47 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
         <Btn label="MANAGE ATHLETES & PROGRAMS" icon="⚙" size="sm"
           bg="transparent" color="#444" border="#1e1e1e" onClick={onManage} />
       </div>
+
+      {/* Per-athlete close week confirmation modal */}
+      {closeWeekUid&&(()=>{
+        const u=users.find(x=>x.id===closeWeekUid);
+        if(!u) return null;
+        return (
+          <div style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(0,0,0,0.88)",
+            backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+            <div style={{background:"#111",border:"1px solid #2a2a2a",borderRadius:20,
+              padding:"32px 28px",maxWidth:340,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",gap:20}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
+                <span style={{fontSize:36}}>{u.emoji}</span>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:u.color,letterSpacing:3,lineHeight:1}}>
+                  CLOSE {u.name.toUpperCase()}'S WEEK?
+                </div>
+              </div>
+              <div style={{color:"#555",fontSize:13,lineHeight:1.6}}>
+                Today becomes {u.name}'s new week start. Their session counts and muscle volume reset — history is kept.
+              </div>
+              <div style={{background:"#0d0d0d",border:"1px solid #1e1e1e",borderRadius:12,padding:"12px 16px"}}>
+                <div style={{color:"#333",fontSize:10,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:4}}>NEW WEEK STARTS</div>
+                <div style={{color:u.color,fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>
+                  {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>setCloseWeekUid(null)} style={{
+                  flex:1,height:48,borderRadius:12,background:"none",border:"1px solid #2a2a2a",
+                  color:"#555",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,cursor:"pointer"}}>
+                  CANCEL
+                </button>
+                <button onClick={()=>handleCloseWeek(u.id)} style={{
+                  flex:1,height:48,borderRadius:12,background:u.color,border:"none",
+                  color:"#080808",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,cursor:"pointer"}}>
+                  CLOSE WEEK
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2295,7 +2423,7 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
             {available.map(u => {
               const prog = programs[u.id];
               const userHist2=history[u.id]||{};
-              const today = prog?.days?.find(d => d.scheduleType==="frequency"?freqAvailable(d,userHist2):getDays(d).includes(todayStr()));
+              const today = prog?.days?.find(d => d.scheduleType==="frequency"?freqAvailable(d,userHist2,u.id):getDays(d).includes(todayStr()));
               return (
                 <button key={u.id} onClick={() => addAthlete(u.id)} style={{
                   background: `${u.color}10`, border: `3px solid ${u.color}44`,
@@ -2313,7 +2441,7 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
                     <div>{prog?.name}</div>
                     <div style={{ color: today?"#777":"#3a3a3a", marginTop:4 }}>
                       {today?(today.scheduleType==="frequency"?
-                        `${today.label} (${sessionsThisWeek(today.label,history[u.id]||{})}/${today.timesPerWeek||3} this week)`:
+                        `${today.label} (${sessionsThisWeek(today.label,history[u.id]||{},u.id)}/${today.timesPerWeek||3} this week)`:
                         `Today: ${today.label}`):"Rest Day"}
                     </div>
                   </div>
@@ -3073,7 +3201,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         <div style={{color:"#333",fontSize:10,letterSpacing:3,marginBottom:2,fontFamily:"'Barlow Condensed',sans-serif"}}>SELECT TODAY'S WORKOUT</div>
         {program?.days?.map(d=>{
           const isFreq = d.scheduleType==="frequency";
-          const doneThisWeek = isFreq ? sessionsThisWeek(d.label, history) : 0;
+          const doneThisWeek = isFreq ? sessionsThisWeek(d.label, history, user.id) : 0;
           const target = d.timesPerWeek||3;
           const remaining = Math.max(0, target - doneThisWeek);
           const isToday = !isFreq && getDays(d).includes(todayStr());
@@ -3215,7 +3343,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
       {/* Smart Workout Modal */}
       {showSmartModal&&(()=>{
-        const ws=weekStart();
+        const ws=weekStart(user.id);
         const wmd=calcWeeklyMuscleData(history,ws);
         return <SmartWorkoutModal
           equipment={user.equipment||[]}
@@ -3668,7 +3796,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                   ) : (
                     <SetInput color={C} setNum={loggedSets.length+1} totalSets={ex.sets} ex={ex}
                       prevSet={loggedSets[loggedSets.length-1]}
-                      recWeight={loggedSets.length===0 ? calcRecommended(ex)?.kg : null}
+                      recWeight={loggedSets.length===0 ? (calcRecommended(ex)?.kg ?? getLastWorkoutData(ex.name)?.weight ?? null) : null}
                       lastReps={loggedSets.length===0 ? getLastWorkoutData(ex.name)?.reps : null}
                       onLog={logSet}
                       useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
@@ -5263,6 +5391,114 @@ function DayMultiSelect({ selected, color, onChange }) {
   );
 }
 
+function MusclePicker({ exName, color }) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(() => getCustomMuscleSplit(exName));
+
+  useEffect(() => {
+    setCustom(getCustomMuscleSplit(exName));
+    setOpen(false);
+  }, [exName]);
+
+  const dbSplit = getDbMuscleSplit(exName);
+  const activeSplit = custom || dbSplit;
+  const isCustomized = !!custom;
+  const hasMuscles = activeSplit && Object.keys(activeSplit).length > 0;
+
+  function toggle(muscleId) {
+    const base = custom || {};
+    const cur = base[muscleId] || 0;
+    const next = cur === 0 ? 0.7 : cur >= 0.6 ? 0.35 : 0;
+    const updated = {...base, [muscleId]: next};
+    Object.keys(updated).forEach(k => { if(updated[k]===0) delete updated[k]; });
+    setCustomMuscleSplit(exName, Object.keys(updated).length > 0 ? updated : null);
+    setCustom(Object.keys(updated).length > 0 ? updated : null);
+  }
+
+  function reset() {
+    setCustomMuscleSplit(exName, null);
+    setCustom(null);
+  }
+
+  return (
+    <div style={{marginTop:10,padding:"12px 14px",background:"#0d0d0d",border:`1px solid ${color}22`,borderRadius:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:(open||hasMuscles)?10:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{color:"#444",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>MUSCLES</div>
+          {isCustomized&&<span style={{fontSize:9,color:"#555",letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",
+            background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:4,padding:"1px 6px"}}>CUSTOM</span>}
+          {!hasMuscles&&!open&&<span style={{fontSize:10,color:"#333",fontFamily:"'Barlow Condensed',sans-serif"}}>not mapped</span>}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {isCustomized&&(
+            <button onClick={reset} style={{background:"none",border:"1px solid #2a2a2a",borderRadius:6,
+              color:"#555",fontSize:9,padding:"3px 8px",cursor:"pointer",
+              fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>RESET</button>
+          )}
+          <button onClick={()=>setOpen(o=>!o)} style={{background:"none",
+            border:`1px solid ${open?color+"44":"#2a2a2a"}`,borderRadius:6,
+            color:open?color:"#555",fontSize:9,padding:"3px 8px",cursor:"pointer",
+            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+            {open?"DONE":"CUSTOMIZE"}
+          </button>
+        </div>
+      </div>
+
+      {/* Collapsed: show active muscle chips */}
+      {!open&&hasMuscles&&(
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+          {Object.entries(activeSplit).sort(([,a],[,b])=>b-a).map(([m,pct])=>(
+            <div key={m} style={{fontSize:10,padding:"2px 8px",borderRadius:6,
+              background:pct>=0.5?`${color}22`:"#1a1a1a",
+              border:`1px solid ${pct>=0.5?color+"44":"#2a2a2a"}`,
+              color:pct>=0.5?color:"#555",
+              fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+              {MUSCLE_LABELS[m]}
+              {!isCustomized&&<span style={{color:"#333",fontSize:8}}> AUTO</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Expanded: full muscle grid */}
+      {open&&(
+        <div>
+          <div style={{color:"#2a2a2a",fontSize:9,marginBottom:8,
+            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+            TAP TO CYCLE: OFF → PRIMARY → SECONDARY → OFF
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+            {MUSCLE_GROUPS.map(m=>{
+              const val=(custom||{})[m]||0;
+              const isPrimary=val>=0.6;
+              const isSecondary=val>0&&val<0.6;
+              const dbVal=(dbSplit||{})[m]||0;
+              return (
+                <button key={m} onClick={()=>toggle(m)} style={{
+                  padding:"7px 4px",borderRadius:8,cursor:"pointer",textAlign:"center",
+                  border:`1px solid ${isPrimary?color:isSecondary?color+"55":dbVal>0?"#252525":"#1a1a1a"}`,
+                  background:isPrimary?`${color}22`:isSecondary?`${color}0f`:dbVal>0?"#141414":"#0d0d0d",
+                  color:isPrimary?color:isSecondary?color+"99":dbVal>0?"#333":"#222",
+                  fontFamily:"'Barlow Condensed',sans-serif",fontSize:10,letterSpacing:0.5,
+                  transition:"all 0.1s",userSelect:"none"}}>
+                  {MUSCLE_LABELS[m]}
+                  {!custom&&dbVal>0&&<div style={{fontSize:7,color:"#333",marginTop:1}}>AUTO</div>}
+                </button>
+              );
+            })}
+          </div>
+          {dbSplit&&!custom&&(
+            <div style={{color:"#2a2a2a",fontSize:9,marginTop:8,
+              fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+              HIGHLIGHTED = AUTO-DETECTED FROM EXERCISE NAME
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExEditor({ ex, num, color, onUpdate, onDelete }) {
   return (
     <div style={{background:"#131313",border:"1px solid #1e1e1e",borderRadius:14,padding:"14px 16px"}}>
@@ -5324,6 +5560,9 @@ function ExEditor({ ex, num, color, onUpdate, onDelete }) {
           }
         </div>
       </div>
+
+      {/* Muscle mapping */}
+      <MusclePicker exName={ex.name} color={color} />
     </div>
   );
 }
