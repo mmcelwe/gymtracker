@@ -4270,9 +4270,9 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                           color:editingSession.date>=new Date().toISOString().split("T")[0]?"#2a2a2a":u.color,
                           fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
                       </div>
-                      {editingSession.date!==date&&(
+                      {editingSession.date!==dateOf(date)&&(
                         <div style={{marginTop:8,color:`${u.color}88`,fontSize:11,textAlign:"center",letterSpacing:1}}>
-                          Moving from {new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                          Moving from {new Date(dateOf(date)+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                           {" → "}{new Date(editingSession.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                         </div>
                       )}
