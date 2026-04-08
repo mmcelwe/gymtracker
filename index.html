@@ -56,28 +56,101 @@ function naturalMonday() {
   return localDateStr(mon);
 }
 
+// Stored as JSON { start, anchor?, weekId? } or legacy plain YYYY-MM-DD (close-week).
+// anchor: week counts start at `start` for the calendar week identified by weekId (= naturalMonday when set).
+// close: same as before — "close week" sets start to today; applies when start >= current natural Monday.
+function parseWeekOverride(raw) {
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    if (j && typeof j.start === "string" && /^\d{4}-\d{2}-\d{2}$/.test(j.start)) {
+      return {
+        start: j.start,
+        anchor: !!j.anchor,
+        weekId: typeof j.weekId === "string" && /^\d{4}-\d{2}-\d{2}$/.test(j.weekId) ? j.weekId : null,
+      };
+    }
+  } catch {}
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { start: raw, anchor: false, weekId: null };
+  return null;
+}
+
+function weekOverrideKey(uid) {
+  return uid ? `gft-week-override-${uid}` : "gft-week-override";
+}
+
 // Returns the effective week start — Monday by default, but an athlete can
-// "close out" their week early. The override is stored in localStorage and
-// auto-expires once the next natural Monday arrives.
+// "close out" their week early or set an anchor from session history.
 function weekStart(uid) {
   const nm = naturalMonday();
+  const key = weekOverrideKey(uid);
+  let raw;
   try {
-    const key = uid ? `gft-week-override-${uid}` : "gft-week-override";
-    const override = localStorage.getItem(key);
-    if (override && override > nm) return override;
+    raw = localStorage.getItem(key);
+  } catch {
+    return nm;
+  }
+  const o = parseWeekOverride(raw);
+  if (!o) return nm;
+  if (o.anchor) {
+    if (!o.weekId || o.weekId !== nm) {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+      return nm;
+    }
+    return o.start;
+  }
+  if (o.start >= nm) return o.start;
+  try {
+    localStorage.removeItem(key);
   } catch {}
   return nm;
 }
 
-// Set today as the manual week start for a specific athlete
+// Set today as the manual week start for a specific athlete (close week)
 function closeWeekNow(uid) {
-  const today = new Date().toISOString().split("T")[0];
-  try { localStorage.setItem(`gft-week-override-${uid}`, today); } catch {}
+  const key = weekOverrideKey(uid);
+  const payload = JSON.stringify({ start: todayIsoLocal(), anchor: false });
+  try {
+    localStorage.setItem(key, payload);
+  } catch {}
+}
+
+// Align weekly counts to a past session date (Manage → session history). Scoped to the current calendar week.
+function setWeekAnchorFromSession(uid, sessionDateStr) {
+  if (!sessionDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(sessionDateStr)) return;
+  const key = weekOverrideKey(uid);
+  const payload = JSON.stringify({
+    start: sessionDateStr,
+    anchor: true,
+    weekId: naturalMonday(),
+  });
+  try {
+    localStorage.setItem(key, payload);
+  } catch {}
 }
 
 // Clear the manual override for a specific athlete
 function clearWeekOverride(uid) {
-  try { localStorage.removeItem(`gft-week-override-${uid}`); } catch {}
+  try {
+    localStorage.removeItem(weekOverrideKey(uid));
+  } catch {}
+}
+
+// Whether localStorage still has a week override that affects this athlete (for UNDO / UI).
+function hasManualWeekSetting(uid) {
+  let raw;
+  try {
+    raw = localStorage.getItem(weekOverrideKey(uid));
+  } catch {
+    return false;
+  }
+  const o = parseWeekOverride(raw);
+  if (!o) return false;
+  const nm = naturalMonday();
+  if (o.anchor) return o.weekId === nm;
+  return o.start >= nm;
 }
 
 // How many sessions of a named day were logged this week
@@ -1855,7 +1928,7 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
   const toggle=id=>setSel(s=>s.includes(id)?s.filter(x=>x!==id):s.length<3?[...s,id]:s);
 
   const nm = naturalMonday();
-  const todayDate = new Date().toISOString().split("T")[0];
+  const todayDate = todayIsoLocal();
 
   function handleCloseWeek(uid) {
     closeWeekNow(uid);
@@ -1900,7 +1973,7 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
           const prog=programs[u.id];
           const userHist=history[u.id]||{};
           const ws=weekStart(u.id);
-          const isOverridden=ws>nm;
+          const isOverridden=hasManualWeekSetting(u.id);
           const closedToday=isOverridden&&ws===todayDate;
           const today=prog?.days?.find(d=>d.scheduleType==="frequency"?freqAvailable(d,userHist,u.id):getDays(d).includes(todayStr()));
           const total=Object.keys(history[u.id]||{}).length;
@@ -4424,6 +4497,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
   const [exportModal,setExportModal]=useState(null);
   const [editSessions,setEditSessions]=useState(null); // {uid, color, name}
   const [editingSession,setEditingSession]=useState(null); // {date, sess}
+  const [weekCountTick,setWeekCountTick]=useState(0); // re-read weekStart from localStorage
   const fileRef=useRef(null);
 
   async function handleFileSelect(e){
@@ -4453,6 +4527,40 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
           </div>
         </div>
         <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:10}}>
+          {(()=>{
+            void weekCountTick;
+            const nm = naturalMonday();
+            const ws = weekStart(u.id);
+            const fmt = iso => new Date(iso+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+            return (
+              <div style={{background:"#111",border:`1px solid ${u.color}33`,borderRadius:14,padding:"14px 16px",marginBottom:4}}>
+                <div style={{color:"#444",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                  WEEK START FOR COUNTS · HOME + SESSION SCREENS
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,justifyContent:"space-between"}}>
+                  <div style={{color:"#888",fontSize:13,lineHeight:1.5}}>
+                    <span style={{color:"#555"}}>Effective: </span>
+                    <span style={{color:u.color,fontWeight:700}}>{fmt(ws).toUpperCase()}</span>
+                    <span style={{color:"#333",margin:"0 6px"}}>·</span>
+                    <span style={{color:"#555"}}>Calendar Mon: </span>
+                    <span style={{color:"#666"}}>{fmt(nm).toUpperCase()}</span>
+                  </div>
+                  {hasManualWeekSetting(u.id)&&(
+                    <button type="button" onClick={()=>{clearWeekOverride(u.id);setWeekCountTick(t=>t+1);}}
+                      style={{background:"none",border:"1px solid #333",borderRadius:8,color:"#666",
+                        padding:"6px 12px",cursor:"pointer",fontSize:11,letterSpacing:1,
+                        fontFamily:"'Barlow Condensed',sans-serif"}}>
+                      RESET TO MONDAY
+                    </button>
+                  )}
+                </div>
+                <div style={{color:"#2a2a2a",fontSize:11,marginTop:10,lineHeight:1.45}}>
+                  Use a session below to count this week from that date (e.g. older logs before “close week”).
+                  Clears when the calendar week changes; Home screen UNDO also clears.
+                </div>
+              </div>
+            );
+          })()}
           {sortedSessions.length===0&&(
             <div style={{color:"#2a2a2a",textAlign:"center",padding:60,fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>NO SESSIONS YET</div>
           )}
@@ -4460,6 +4568,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
             const ts=Object.values(sess.namedLog||{}).flat().filter(Boolean).length;
             const exNames=Object.keys(sess.namedLog||{});
             const isEditing=editingSession?.originalDate===date;
+            const sessDate=sess.date||dateOf(date);
             return (
               <div key={date} style={{background:"#0d0d0d",border:`2px solid ${isEditing?u.color:"#1a1a1a"}`,
                 borderRadius:16,overflow:"hidden",transition:"border 0.15s"}}>
@@ -4468,7 +4577,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                   <div style={{flex:1}}>
                     <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",letterSpacing:2,lineHeight:1}}>{sess.day}</div>
                     <div style={{color:"#444",fontSize:12,marginTop:2}}>
-                      {new Date((sess.date||dateOf(date))+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
+                      {new Date(sessDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}
                       {" · "}{ts} sets · {exNames.length} exercises
                     </div>
                     <div style={{color:"#333",fontSize:11,marginTop:1}}>
@@ -4477,8 +4586,17 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                     {sess.notes&&<div style={{marginTop:4,color:"#383838",fontSize:11,
                       fontStyle:"italic",lineHeight:1.4}}>"{sess.notes}"</div>}
                   </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>setEditingSession(isEditing?null:{date:sess.date||dateOf(date),originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                    <button type="button" onClick={()=>{
+                      setWeekAnchorFromSession(u.id,sessDate);
+                      setWeekCountTick(t=>t+1);
+                    }} style={{background:"#141414",border:"1px solid #2a2a2a",borderRadius:9,
+                      color:"#888",padding:"8px 10px",cursor:"pointer",maxWidth:140,
+                      fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:10,letterSpacing:1,lineHeight:1.2}}
+                      title="Count weekly sessions and muscle volume from this session date through the current calendar week">
+                      WEEK START HERE
+                    </button>
+                    <button onClick={()=>setEditingSession(isEditing?null:{date:sessDate,originalDate:date,sess:JSON.parse(JSON.stringify(sess))})}
                       style={{background:`${u.color}1a`,border:`1px solid ${u.color}44`,borderRadius:9,
                         color:u.color,padding:"8px 14px",cursor:"pointer",
                         fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2}}>
@@ -6888,7 +7006,9 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                           boxShadow:achieved?`0 0 12px #A8FF3E88`:`0 0 8px ${C}66`}}/>
                       </div>
                       {!achieved&&bestW>0&&<div style={{color:"#333",fontSize:11,marginTop:6}}>
-                        {goalW-bestW>0?`${(goalW-bestW).toFixed(1)} away from target weight`:"Weight reached — work on reps!"}
+                        {goalW-bestW>0
+                          ?`${useKg?(goalW-bestW).toFixed(1)+" kg":kgToLbs(goalW-bestW)+" lbs"} away from target weight`
+                          :"Weight reached — work on reps!"}
                       </div>}
                     </div>
                   </div>
