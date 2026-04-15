@@ -2769,6 +2769,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     return null;
   }
 
+  // Find the single highest-weight set ever logged for an exercise across all sessions
+  function getPersonalBestData(exName) {
+    let best = null;
+    for(const [,sess] of Object.entries(history)) {
+      if(!sess) continue;
+      const sets = (sess.namedLog||{})[exName];
+      if(!sets?.length) continue;
+      for(const s of sets.filter(Boolean)) {
+        if(!s.weight || s.weight==="BW") continue;
+        const w = parseFloat(s.weight)||0;
+        if(!best || w > (parseFloat(best.weight)||0)) best = s;
+      }
+    }
+    return best; // {weight (kg), reps, rpe} or null
+  }
+
   function calcRecommended(ex) {
     const prog = ex.progression;
     if(!prog||parseFloat(prog.value)<=0) return null;
@@ -3881,9 +3897,9 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                       onCancel={()=>setEditingSet(null)}
                     />
                   ) : (
-                    <SetInput color={C} setNum={loggedSets.length+1} totalSets={ex.sets} ex={ex}
+                    <SetInput key={loggedSets.length} color={C} setNum={loggedSets.length+1} totalSets={ex.sets} ex={ex}
                       prevSet={loggedSets[loggedSets.length-1]}
-                      recWeight={loggedSets.length===0 ? (calcRecommended(ex)?.kg ?? getLastWorkoutData(ex.name)?.weight ?? null) : null}
+                      recWeight={loggedSets.length===0 ? (calcRecommended(ex)?.kg ?? getPersonalBestData(ex.name)?.weight ?? null) : null}
                       lastReps={loggedSets.length===0 ? getLastWorkoutData(ex.name)?.reps : null}
                       onLog={logSet}
                       useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
@@ -3907,7 +3923,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
               {isActive&&done&&!editingSet&&(
                 <div style={{borderTop:`1px solid ${C}22`,padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
                   {ex._addingExtra ? (
-                    <SetInput color={C} setNum={loggedSets.length+1} totalSets={loggedSets.length+1} ex={ex}
+                    <SetInput key={loggedSets.length} color={C} setNum={loggedSets.length+1} totalSets={loggedSets.length+1} ex={ex}
                       prevSet={loggedSets[loggedSets.length-1]}
                       recWeight={null}
                       lastReps={null}
@@ -4213,8 +4229,14 @@ function EditSetInput({ color, useKg, set, setNum, onSave, onDelete, onCancel })
 
 // ─── Set Input ────────────────────────────────────────────────────────────────
 function SetInput({ color, setNum, totalSets, ex, prevSet, recWeight=null, lastReps=null, onLog, useKg=true, onToggleUnit }) {
-  const [wt,setWt]=useState("");
-  const [rp,setRp]=useState("");
+  const initWt = prevSet?.weight ? toDisplayVal(prevSet.weight, useKg)
+               : recWeight ? toDisplayVal(recWeight, useKg)
+               : "";
+  const initRp = prevSet?.reps ? String(prevSet.reps)
+               : lastReps ? String(lastReps)
+               : "";
+  const [wt,setWt]=useState(initWt);
+  const [rp,setRp]=useState(initRp);
   const [rpe,setRpe]=useState(0);
   const [showPlates,setShowPlates]=useState(false);
 
