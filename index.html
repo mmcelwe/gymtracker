@@ -2743,7 +2743,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setExercises(exCopy);
     setCurrentExId(exCopy[0]?.id||null);
     setLogged({});
-    setExerciseNotes({});
+    setExerciseNotes(buildCarriedNotes(exCopy));
     setSetIdx(0);
     setStartTime(Date.now());
     sessionKeyRef.current=null;
@@ -2783,6 +2783,20 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       }
     }
     return best; // {weight (kg), reps, rpe} or null
+  }
+
+  // Build initial exerciseNotes map from history for a set of exercises (carry-over from last session)
+  function buildCarriedNotes(exArray) {
+    const notes = {};
+    const sessions = Object.entries(history).sort(([a],[b])=>b.localeCompare(a)); // newest first
+    exArray.forEach(ex => {
+      for(const [,sess] of sessions) {
+        if(!sess?.exerciseNotes) continue;
+        const note = sess.exerciseNotes[ex.name];
+        if(note?.trim()) { notes[ex.id] = note.trim(); break; }
+      }
+    });
+    return notes;
   }
 
   function calcRecommended(ex) {
@@ -2869,7 +2883,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setExercises(exCopy);
     setCurrentExId(exCopy[0]?.id||null);
     setLogged({});
-    setExerciseNotes({});
+    setExerciseNotes(buildCarriedNotes(exCopy));
     setSetIdx(0);
     setStartTime(Date.now());
     sessionKeyRef.current=null;
@@ -2961,7 +2975,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setExercises(exList);
     setCurrentExId(exList[0]?.id||null);
     setLogged({});
-    setExerciseNotes({});
+    setExerciseNotes(buildCarriedNotes(exList));
     setSetIdx(0);
     setStartTime(Date.now());
     sessionKeyRef.current=null;
