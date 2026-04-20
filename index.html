@@ -1233,8 +1233,9 @@ const SYNC_URL = "https://script.google.com/macros/s/AKfycbxPfb0hnqWuOsS8H45JhVL
 // Write to localStorage immediately, then push to Google Sheets in background
 async function sSet(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-  // Background sync — don't await, don't block the UI
-  syncToSheet(k, JSON.stringify(v));
+  // History synced per-user to stay under Sheets' 50K char cell limit
+  if(k === "gft-history") syncHistoryToSheet(v);
+  else syncToSheet(k, JSON.stringify(v));
 }
 
 // Read from localStorage (fast, offline-first)
@@ -1255,12 +1256,39 @@ function syncToSheet(key, value) {
   } catch {}
 }
 
+// Sync history split by user to avoid Google Sheets' 50K char cell limit
+function syncHistoryToSheet(history) {
+  for(const [uid, sessions] of Object.entries(history||{})) {
+    syncToSheet("gft-history-" + uid, JSON.stringify(sessions));
+  }
+}
+
 // Pull all data from Google Sheets (used on startup for cross-device sync)
 async function syncFromSheet() {
   try {
     const resp = await fetch(SYNC_URL + "?t=" + Date.now(), { redirect: "follow" });
     if (!resp.ok) return null;
     const data = await resp.json();
+    // Reconstruct history from per-user keys (gft-history-{uid})
+    // Falls back to legacy gft-history key if per-user keys don't exist yet
+    const perUserKeys = Object.keys(data).filter(k => k.startsWith("gft-history-"));
+    if(perUserKeys.length > 0) {
+      const reconstructed = {};
+      perUserKeys.forEach(k => {
+        const uid = k.slice("gft-history-".length);
+        try { reconstructed[uid] = JSON.parse(data[k]); } catch {}
+      });
+      // Merge in legacy gft-history if present (migration path)
+      if(data["gft-history"]) {
+        try {
+          const legacy = JSON.parse(data["gft-history"]);
+          Object.entries(legacy).forEach(([uid, sessions]) => {
+            if(!reconstructed[uid]) reconstructed[uid] = sessions;
+          });
+        } catch {}
+      }
+      data["gft-history"] = JSON.stringify(reconstructed);
+    }
     return data;
   } catch { return null; }
 }
@@ -1292,15 +1320,16 @@ function mergeHistories(local, cloud) {
   return merged;
 }
 
-// Sync all 4 data keys to Google Sheets at once
+// Sync all data keys to Google Sheets at once
 function syncAllToSheet() {
-  const keys = ["gft-users", "gft-programs", "gft-history", "gft-goals"];
-  keys.forEach(k => {
-    try {
-      const v = localStorage.getItem(k);
-      if (v) syncToSheet(k, v);
-    } catch {}
+  ["gft-users", "gft-programs", "gft-goals"].forEach(k => {
+    try { const v = localStorage.getItem(k); if(v) syncToSheet(k, v); } catch {}
   });
+  // History synced per-user to stay under Sheets' 50K char cell limit
+  try {
+    const v = localStorage.getItem("gft-history");
+    if(v) syncHistoryToSheet(JSON.parse(v));
+  } catch {}
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
