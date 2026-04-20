@@ -1245,10 +1245,11 @@ async function sGet(k) {
 // Push a single key to Google Sheets
 function syncToSheet(key, value) {
   try {
+    // mode:"no-cors" avoids CORS preflight and prevents Google's redirect from
+    // silently downgrading POST→GET (which caused doPost to never fire)
     fetch(SYNC_URL, {
       method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain" },
+      mode: "no-cors",
       body: JSON.stringify({ key, value })
     }).catch(() => {}); // silently fail if offline
   } catch {}
@@ -4598,7 +4599,7 @@ function TouchCard({ color, highlight, onClick, children }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // MANAGE SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
-function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser, onDeleteUser, onUpdateProgram, onUpdateGoals, onUpdateHistory, onBack, onExportBackup, onExportHistory, onImport }) {
+function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser, onDeleteUser, onUpdateProgram, onUpdateGoals, onUpdateHistory, onBack, onExportBackup, onExportHistory, onImport, onSyncNow }) {
   const [editUser,setEditUser]=useState(null);
   const [editProg,setEditProg]=useState(null);
   const [viewProg,setViewProg]=useState(null);
@@ -4610,6 +4611,7 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
   const [editSessions,setEditSessions]=useState(null); // {uid, color, name}
   const [editingSession,setEditingSession]=useState(null); // {date, sess}
   const [weekCountTick,setWeekCountTick]=useState(0); // re-read weekStart from localStorage
+  const [syncStatus,setSyncStatus]=useState(null); // null | "syncing" | "ok" | "error"
   const fileRef=useRef(null);
 
   async function handleFileSelect(e){
@@ -5017,6 +5019,52 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
         <div style={{background:"#0d0d0d",border:"1px solid #1a1a1a",borderRadius:18,padding:"22px 24px"}}>
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#F0F0F0",letterSpacing:3,marginBottom:4}}>DATA MANAGEMENT</div>
           <div style={{color:"#383838",fontSize:12,marginBottom:18}}>Export your data for backup or analysis. Import to restore.</div>
+
+          {/* Cloud sync */}
+          <div style={{background:"#080808",border:"1px solid #1e1e1e",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:2,color:"#555"}}>☁ GOOGLE SHEETS SYNC</div>
+                <div style={{color:"#2a2a2a",fontSize:11,marginTop:2}}>Push local data to cloud and pull any missing sessions</div>
+              </div>
+              <button onClick={async()=>{
+                if(syncStatus==="syncing") return;
+                setSyncStatus("syncing");
+                try {
+                  syncAllToSheet();
+                  const cloud = await syncFromSheet();
+                  if(cloud && Object.keys(cloud).length>0) {
+                    const ch = cloud["gft-history"] ? JSON.parse(cloud["gft-history"]) : null;
+                    if(ch) {
+                      const lh = JSON.parse(localStorage.getItem("gft-history")||"{}");
+                      const merged = mergeHistories(lh, ch);
+                      const mergedCount = Object.values(merged).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+                      const localCount = Object.values(lh).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+                      if(mergedCount > localCount) {
+                        onSyncNow(merged);
+                        syncToSheet("gft-history", JSON.stringify(merged));
+                      }
+                    }
+                  }
+                  setSyncStatus("ok");
+                  setTimeout(()=>setSyncStatus(null), 3000);
+                } catch(e) {
+                  setSyncStatus("error");
+                  setTimeout(()=>setSyncStatus(null), 4000);
+                }
+              }} style={{
+                minWidth:120, height:38, borderRadius:10, border:"none", cursor: syncStatus==="syncing"?"default":"pointer",
+                background: syncStatus==="ok" ? "#0a2a0a" : syncStatus==="error" ? "#2a0a0a" : syncStatus==="syncing" ? "#141414" : "#1a1a1a",
+                color: syncStatus==="ok" ? "#7ddd7d" : syncStatus==="error" ? "#dd7d7d" : "#888",
+                fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:13, letterSpacing:2,
+                border: `1px solid ${syncStatus==="ok"?"#2a4a2a":syncStatus==="error"?"#4a2a2a":"#2a2a2a"}`,
+                transition:"all 0.2s"
+              }}>
+                {syncStatus==="syncing" ? "SYNCING..." : syncStatus==="ok" ? "✓ SYNCED" : syncStatus==="error" ? "✕ FAILED" : "SYNC NOW"}
+              </button>
+            </div>
+          </div>
+
           <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
             <Btn label="EXPORT BACKUP" icon="💾" size="sm"
               bg="rgba(255,255,255,0.05)" color="#ddd" border="#2a2a2a"
@@ -7501,6 +7549,7 @@ function App() {
       onExportBackup={()=>{ try{localStorage.setItem("gft-sessions-since-backup","0");}catch{} return buildBackupCsv(users,programs,history,goals); }}
       onExportHistory={()=>buildHistoryCsv(users,history)}
       onImport={d=>{if(d["gft-users"])saveUsers(d["gft-users"]);if(d["gft-programs"])savePrograms(d["gft-programs"]);if(d["gft-history"])saveHistory(d["gft-history"]);if(d["gft-goals"])saveGoals(d["gft-goals"]);}}
+      onSyncNow={mergedHistory=>{ setHistory(mergedHistory); try{localStorage.setItem("gft-history",JSON.stringify(mergedHistory));}catch{} }}
       onBack={()=>setScreen("home")}/><BackupOverlay/></>
   );
   return (
