@@ -1492,229 +1492,34 @@ function Stepper({ value, onChange, min=0, color }) {
 }
 
 
-// ─── QWERTY Keyboard (slide-up, touch-first) ─────────────────────────────────
-function Keyboard({ value, onConfirm, onClose, color, label, multiline=false }) {
-  const [v, setV] = useState(value||"");
-  const [caps, setCaps] = useState(false);
-  const [shifted, setShifted] = useState(false);
-  const [mode, setMode] = useState("alpha"); // "alpha" | "sym" | "pad"
-
-  const rows_alpha = [
-    ["q","w","e","r","t","y","u","i","o","p"],
-    ["a","s","d","f","g","h","j","k","l"],
-    ["⇧","z","x","c","v","b","n","m","⌫"],
-  ];
-  const rows_sym = [
-    ["1","2","3","4","5","6","7","8","9","0"],
-    ["-","/",":",";","(",")","$","&","@",'"'],
-    ["#+=",".",",","?","!","'","⌫"],
-  ];
-  const pad_rows = [["7","8","9"],["4","5","6"],["1","2","3"],["C","0","⌫"]];
-
-  function press(k) {
-    if (k === "⌫") { setV(s => s.slice(0,-1)); return; }
-    if (k === "C") { setV(""); return; }
-    if (k === "⇧") { setShifted(s => { const n=!s; setCaps(n); return n; }); return; }
-    if (k === "123") { setMode("sym"); setCaps(false); setShifted(false); return; }
-    if (k === "ABC") { setMode("alpha"); setCaps(false); setShifted(false); return; }
-    if (k === "#+=") { setMode(m => m==="sym"?"alpha":"sym"); return; }
-    if (k === "SPACE") { setV(s => s + " "); return; }
-    if (k === "RETURN") { if(multiline) setV(s => s + "\n"); return; }
-    const char = (caps || shifted) ? k.toUpperCase() : k;
-    setV(s => s + char);
-    if (shifted && !caps) { setCaps(false); setShifted(false); }
-  }
-
-  const padKeyStyle = (k) => ({
-    height: 72, borderRadius: 14,
-    fontSize: k==="⌫"?26:k==="C"?20:30,
-    fontFamily: k==="C"?"'Barlow Condensed',sans-serif":"'Bebas Neue',sans-serif",
-    fontWeight: 700,
-    background: k==="C"?"#2a0a0a":k==="⌫"?"#1a1a1a":"#1e1e1e",
-    border: `2px solid ${k==="C"?"#FF444433":k==="⌫"?"#2a2a2a":"#2a2a2a"}`,
-    color: k==="C"?"#FF6060":k==="⌫"?"#888":"#F0F0F0",
-    cursor:"pointer", userSelect:"none",
-    display:"flex", alignItems:"center", justifyContent:"center",
-  });
-
-  const keyStyle = (k) => {
-    const isSpecial = ["⇧","⌫","#+=","123","ABC","SPACE","RETURN","PAD"].includes(k);
-    const isActive = (k==="⇧" && caps) || (k==="PAD" && mode==="pad");
-    return {
-      minWidth: k==="SPACE"?"100%":k==="RETURN"||k==="PAD"?62:k==="⌫"||k==="⇧"?62:42,
-      height: 56, borderRadius: 12,
-      background: isActive ? color : isSpecial ? "#2a2a2a" : "#1e1e1e",
-      border: `1px solid ${isActive ? color : "#333"}`,
-      color: isActive ? "#000" : isSpecial ? "#aaa" : "#f0f0f0",
-      fontSize: k==="⌫"?24:k==="⇧"||k==="PAD"?22:22,
-      fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-      cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
-      flexShrink: 0, userSelect:"none", transition:"background 0.08s",
-    };
-  };
-
-  const rows = mode==="sym" ? rows_sym : rows_alpha;
-
-  return ReactDOM.createPortal(
-    <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}
-      onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#111",borderTop:`3px solid ${color}`,borderRadius:"24px 24px 0 0",
-        padding:"14px 12px 24px", maxHeight:"94vh", display:"flex", flexDirection:"column"}}>
-
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,padding:"0 4px",flexShrink:0}}>
-          <div style={{color:"#444",fontSize:11,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>{label?.toUpperCase()}</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer",padding:"2px 8px"}}>✕</button>
-        </div>
-
-        {/* Preview */}
-        <div style={{
-          background:"#0d0d0d", border:`2px solid ${color}55`, borderRadius:10,
-          padding:"8px 12px", marginBottom:10, minHeight:38, maxHeight:72, overflowY:"auto",
-          fontFamily:"'Barlow',sans-serif", fontSize:16, color:"#F0F0F0",
-          lineHeight:1.5, wordBreak:"break-all", whiteSpace:"pre-wrap", flexShrink:0,
-        }}>
-          {v||<span style={{color:"#333"}}>Start typing...</span>}
-          <span style={{display:"inline-block",width:2,height:"1em",background:color,
-            marginLeft:2,verticalAlign:"text-bottom",animation:"blink 1s step-end infinite"}}/>
-        </div>
-
-        {/* Keys — fill remaining space */}
-        <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
-        {mode==="pad" ? (
-          <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
-              {pad_rows.map((row,ri)=>(
-                <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
-                  {row.map(k=>(
-                    <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}} style={{...padKeyStyle(k),height:64}}>{k}</button>
-                  ))}
-                </div>
-              ))}
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6,width:72}}>
-              <button onPointerDown={e=>{e.preventDefault();setMode("alpha");}}
-                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
-                  cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>ABC</button>
-              <button onPointerDown={e=>{e.preventDefault();setMode("sym");}}
-                style={{height:64,borderRadius:12,background:"#2a2a2a",border:"1px solid #383838",
-                  color:"#ccc",fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
-                  cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>!#&</button>
-              <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
-                style={{flex:1,borderRadius:12,background:color,border:"none",color:"#000",
-                  fontSize:18,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:2,
-                  cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>DONE</button>
-            </div>
-          </div>
-        ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {rows.map((row,ri)=>(
-              <div key={ri} style={{display:"flex",gap:5,justifyContent:"center"}}>
-                {row.map(k=>(
-                  <button key={k} onPointerDown={e=>{e.preventDefault();press(k);}}
-                    style={{...keyStyle(k),height:52,minWidth:k==="⌫"||k==="⇧"?56:0,flex:k==="⌫"||k==="⇧"?"0 0 56px":"1 1 0"}}>
-                    {k==="⇧"?"⇧":k==="⌫"?"⌫":k==="#+="?"#+=":caps||shifted?k.toUpperCase():k}
-                  </button>
-                ))}
-              </div>
-            ))}
-            {/* Bottom row — always visible */}
-            <div style={{display:"flex",gap:5,width:"100%",marginTop:2}}>
-              <button onPointerDown={e=>{e.preventDefault();press(mode==="sym"?"ABC":"123");}}
-                style={{...keyStyle("123"),height:52,width:56,minWidth:0,flex:"0 0 56px",fontSize:15}}>{mode==="sym"?"ABC":"123"}</button>
-              <button onPointerDown={e=>{e.preventDefault();setMode("pad");}}
-                style={{...keyStyle("PAD"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:20,
-                  background:mode==="pad"?color:"#252525",color:mode==="pad"?"#000":"#aaa"}}>🔢</button>
-              <button onPointerDown={e=>{e.preventDefault();press("SPACE");}}
-                style={{...keyStyle("SPACE"),height:52,flex:1,minWidth:0}}>SPACE</button>
-              {multiline&&<button onPointerDown={e=>{e.preventDefault();press("RETURN");}}
-                style={{...keyStyle("RETURN"),height:52,width:50,minWidth:0,flex:"0 0 50px",fontSize:24}}>↵</button>}
-              <button onPointerDown={e=>{e.preventDefault();onConfirm(v);}}
-                style={{...keyStyle("DONE"),height:52,width:76,minWidth:0,flex:"0 0 76px",background:color,border:"none",color:"#000",fontSize:16,letterSpacing:1}}>DONE</button>
-            </div>
-          </div>
-        )}
-        </div>
-      </div>
-      <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
-    </div>,
-    document.body
-  );
-}
-// ─── TouchTextInput — tap to open QWERTY keyboard ────────────────────────────
+// ─── TouchTextInput — native input, uses device's own keyboard ───────────────
 function TouchTextInput({ value, onChange, color, label, placeholder="Tap to enter", multiline=false }) {
-  const [showKb, setShowKb] = useState(false);
-  const [hwMode, setHwMode] = useState(false); // hardware keyboard mode — shows real input
-  const isEmpty = !value || value.trim()==="";
-  const inputRef = useRef(null);
-
-  function activateHwMode(){
-    setHwMode(true);
-    setTimeout(()=>inputRef.current?.focus(),50);
-  }
-
+  const baseStyle = {
+    width:"100%", borderRadius:12, boxSizing:"border-box",
+    background:"#111", border:`2px solid ${color}44`,
+    padding:"12px 16px", textAlign:"left",
+    fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
+    color:"#F0F0F0", outline:"none", caretColor:"#fff",
+    transition:"border 0.15s",
+  };
   return (
     <div>
       {label&&<div style={{color:"#555",fontSize:11,letterSpacing:3,marginBottom:6,
         fontFamily:"'Barlow Condensed',sans-serif"}}>{label}</div>}
-      <div style={{position:"relative"}}>
-        {hwMode ? (
-          /* Visible input for physical keyboard */
-          multiline ? (
-            <textarea ref={inputRef} value={value||""} placeholder={placeholder}
-              onChange={e=>onChange(e.target.value)}
-              onBlur={()=>setHwMode(false)}
-              style={{
-                width:"100%", minHeight:72, borderRadius:12, resize:"vertical",
-                background:"#111", border:`2px solid ${color}`,
-                padding:"12px 44px 12px 16px", textAlign:"left",
-                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
-                color:"#F0F0F0", outline:"none", caretColor:"#fff",
-                boxSizing:"border-box",
-              }}/>
-          ) : (
-            <input ref={inputRef} type="text" value={value||""} placeholder={placeholder}
-              onChange={e=>onChange(e.target.value)}
-              onBlur={()=>setHwMode(false)}
-              onKeyDown={e=>{if(e.key==="Enter"){e.target.blur();}}}
-              style={{
-                width:"100%", height:52, borderRadius:12, boxSizing:"border-box",
-                background:"#111", border:`2px solid ${color}`,
-                padding:"12px 44px 12px 16px", textAlign:"left",
-                fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
-                color:"#F0F0F0", outline:"none", caretColor:"#fff",
-              }}/>
-          )
-        ) : (
-          /* Touch display — tap opens custom keyboard */
-          <button onClick={()=>setShowKb(true)} style={{
-            width:"100%", minHeight: multiline ? 72 : 52, borderRadius:12, cursor:"pointer",
-            background:"#111", border:`2px solid ${color}44`,
-            padding:"12px 44px 12px 16px", textAlign:"left", display:"block",
-            fontFamily:"'Barlow',sans-serif", fontSize:17, lineHeight:1.5,
-            color: isEmpty ? "#333" : "#F0F0F0",
-            whiteSpace: multiline ? "pre-wrap" : "nowrap",
-            overflow:"hidden", textOverflow: multiline ? "clip" : "ellipsis",
-            transition:"border 0.15s",
-          }}
-          onPointerEnter={e=>e.currentTarget.style.borderColor=color}
-          onPointerLeave={e=>e.currentTarget.style.borderColor=`${color}44`}>
-            {isEmpty ? placeholder : value}
-          </button>
-        )}
-        {/* Physical keyboard toggle */}
-        <button onClick={e=>{e.stopPropagation();if(hwMode){setHwMode(false);}else{activateHwMode();}}} style={{
-          position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
-          width:32,height:32,borderRadius:8,cursor:"pointer",
-          background:hwMode?color:`${color}18`,border:`1px solid ${color}33`,
-          color:hwMode?"#000":color,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
-          flexShrink:0,zIndex:2}} title="Toggle physical keyboard">⌨</button>
-      </div>
-      {showKb&&<Keyboard value={value} label={label||placeholder} color={color}
-        multiline={multiline}
-        onConfirm={v=>{onChange(v);setShowKb(false);}}
-        onClose={()=>setShowKb(false)}/>}
+      {multiline ? (
+        <textarea value={value||""} placeholder={placeholder}
+          onChange={e=>onChange(e.target.value)}
+          onFocus={e=>e.target.style.borderColor=color}
+          onBlur={e=>e.target.style.borderColor=`${color}44`}
+          style={{...baseStyle, minHeight:72, resize:"vertical"}}/>
+      ) : (
+        <input type="text" value={value||""} placeholder={placeholder}
+          onChange={e=>onChange(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter") e.target.blur();}}
+          onFocus={e=>e.target.style.borderColor=color}
+          onBlur={e=>e.target.style.borderColor=`${color}44`}
+          style={{...baseStyle, height:52}}/>
+      )}
     </div>
   );
 }
