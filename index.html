@@ -19,6 +19,8 @@
     input,textarea,select{caret-color:#fff !important}
     body{margin:0;overflow-x:hidden;background:#080808}
     #root{min-height:100vh}
+    .hide-scrollbar{scrollbar-width:none;-ms-overflow-style:none}
+    .hide-scrollbar::-webkit-scrollbar{display:none}
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
@@ -1223,6 +1225,8 @@ async function importBackupCsv(file) {
   });
 }
 
+const APP_VERSION = "1.0.0";
+
 // ─── Storage with Google Sheets Sync ─────────────────────────────────────────
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbwiPH3oo9QSS2nYaWCgWKX55Csr9Hy9Fir68DOYF_F7fp3ObBV5VZ3Z2tEbxKFLee9e/exec";
 
@@ -1258,6 +1262,33 @@ async function syncFromSheet() {
     const data = await resp.json();
     return data;
   } catch { return null; }
+}
+
+// Merge two history objects — unions all sessions across both sources.
+// For the same session key: prefers completed over partial, then more sets logged.
+function mergeHistories(local, cloud) {
+  const merged = {};
+  const allUids = new Set([...Object.keys(local||{}), ...Object.keys(cloud||{})]);
+  for(const uid of allUids) {
+    const lSess = (local||{})[uid] || {};
+    const cSess = (cloud||{})[uid] || {};
+    const allKeys = new Set([...Object.keys(lSess), ...Object.keys(cSess)]);
+    merged[uid] = {};
+    for(const key of allKeys) {
+      const l = lSess[key];
+      const c = cSess[key];
+      if(!l) { merged[uid][key] = c; continue; }
+      if(!c) { merged[uid][key] = l; continue; }
+      // Both have this session — prefer completed over partial
+      if(!l.partial && c.partial) { merged[uid][key] = l; continue; }
+      if(l.partial && !c.partial) { merged[uid][key] = c; continue; }
+      // Both same completion status — prefer whichever has more sets logged
+      const lSets = Object.values(l.namedLog||{}).reduce((a,s)=>a+(Array.isArray(s)?s.length:0),0);
+      const cSets = Object.values(c.namedLog||{}).reduce((a,s)=>a+(Array.isArray(s)?s.length:0),0);
+      merged[uid][key] = cSets > lSets ? c : l;
+    }
+  }
+  return merged;
 }
 
 // Sync all 4 data keys to Google Sheets at once
@@ -2038,6 +2069,23 @@ function HomeScreen({ users, programs, history, onStartSession, onManage }) {
           bg="transparent" color="#444" border="#1e1e1e" onClick={onManage} />
       </div>
 
+      {/* About footer */}
+      <div style={{position:"absolute",bottom:20,left:0,right:0,display:"flex",flexDirection:"column",
+        alignItems:"center",gap:4,pointerEvents:"none"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:10,letterSpacing:3,color:"#1e1e1e"}}>
+            FAMILY GYM TRACKER
+          </div>
+          <div style={{width:3,height:3,borderRadius:"50%",background:"#1e1e1e"}}/>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:10,letterSpacing:2,color:"#1e1e1e"}}>
+            v{APP_VERSION}
+          </div>
+        </div>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:9,letterSpacing:2,color:"#161616"}}>
+          OFFLINE-FIRST · GOOGLE SHEETS SYNC · PWA
+        </div>
+      </div>
+
       {/* Per-athlete close week confirmation modal */}
       {closeWeekUid&&(()=>{
         const u=users.find(x=>x.id===closeWeekUid);
@@ -2656,6 +2704,8 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const sessionKeyRef=useRef(null); // unique key for this session, set on first finish
   const totalRestMsRef=useRef(0);   // accumulated rest milliseconds (excluded from calorie calc)
   const restStartRef=useRef(null);  // timestamp when current rest timer began
+  const scrollRef=useRef(null);     // ref to the main scrollable content div
+  const scrollIntervalRef=useRef(null); // interval for hold-to-scroll
   const [sessionMode,setSessionMode]=useState("traditional"); // "traditional" | "circuit"
   const [exerciseNotes,setExerciseNotes]=useState({}); // keyed by exercise id
   const [isFreestyle,setIsFreestyle]=useState(false);
@@ -3700,7 +3750,33 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
         ))}
       </div>
 
-      <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:10}}>
+      {/* Scroll handles — dedicated up/down controls to avoid mis-taps on exercise cards */}
+      <div style={{position:"absolute",right:4,top:"50%",transform:"translateY(-50%)",
+        zIndex:20,display:"flex",flexDirection:"column",gap:3,pointerEvents:"none"}}>
+        <button
+          onPointerDown={e=>{e.preventDefault();scrollIntervalRef.current=setInterval(()=>{scrollRef.current?.scrollBy({top:-80});},45);}}
+          onPointerUp={()=>clearInterval(scrollIntervalRef.current)}
+          onPointerLeave={()=>clearInterval(scrollIntervalRef.current)}
+          onPointerCancel={()=>clearInterval(scrollIntervalRef.current)}
+          style={{pointerEvents:"all",width:30,height:54,borderRadius:"10px 10px 5px 5px",
+            background:"rgba(16,16,16,0.94)",border:"1px solid #282828",
+            color:"#505050",cursor:"pointer",fontSize:13,display:"flex",
+            alignItems:"center",justifyContent:"center",
+            touchAction:"none",userSelect:"none",WebkitUserSelect:"none"}}>▲</button>
+        <div style={{width:30,height:2,background:"#1e1e1e",borderRadius:1,alignSelf:"center",pointerEvents:"none"}}/>
+        <button
+          onPointerDown={e=>{e.preventDefault();scrollIntervalRef.current=setInterval(()=>{scrollRef.current?.scrollBy({top:80});},45);}}
+          onPointerUp={()=>clearInterval(scrollIntervalRef.current)}
+          onPointerLeave={()=>clearInterval(scrollIntervalRef.current)}
+          onPointerCancel={()=>clearInterval(scrollIntervalRef.current)}
+          style={{pointerEvents:"all",width:30,height:54,borderRadius:"5px 5px 10px 10px",
+            background:"rgba(16,16,16,0.94)",border:"1px solid #282828",
+            color:"#505050",cursor:"pointer",fontSize:13,display:"flex",
+            alignItems:"center",justifyContent:"center",
+            touchAction:"none",userSelect:"none",WebkitUserSelect:"none"}}>▼</button>
+      </div>
+
+      <div ref={scrollRef} className="hide-scrollbar" style={{flex:1,minHeight:0,overflowY:"auto",padding:"10px 44px 10px 12px",display:"flex",flexDirection:"column",gap:10}}>
 
         {/* ── All exercises list ── */}
         <div style={{color:"#2a2a2a",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:2}}>
@@ -7273,20 +7349,34 @@ function App() {
           const ch = cloud["gft-history"] ? JSON.parse(cloud["gft-history"]) : null;
           const cg = cloud["gft-goals"] ? JSON.parse(cloud["gft-goals"]) : null;
 
-          // Use cloud data if it has more history (more sessions = more recent)
           const localSessionCount = Object.values(lh||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
           const cloudSessionCount = Object.values(ch||{}).reduce((a,h)=>a+Object.keys(h||{}).length,0);
 
-          if(cloudSessionCount > localSessionCount){
-            if(cu){setUsers(cu); try{localStorage.setItem("gft-users",JSON.stringify(cu));}catch{}}
-            if(cp){setPrograms(cp); try{localStorage.setItem("gft-programs",JSON.stringify(cp));}catch{}}
-            if(ch){setHistory(ch); try{localStorage.setItem("gft-history",JSON.stringify(ch));}catch{}}
-            if(cg){setGoals(cg); try{localStorage.setItem("gft-goals",JSON.stringify(cg));}catch{}}
-            console.log("Synced from cloud:", cloudSessionCount, "sessions (local had", localSessionCount+")");
-          } else if(localSessionCount > 0 && cloudSessionCount === 0){
-            // Local has data but cloud is empty — push local to cloud
+          if(cloudSessionCount === 0 && localSessionCount > 0){
+            // Cloud is empty — push everything up
             syncAllToSheet();
-            console.log("Pushed local data to cloud:", localSessionCount, "sessions");
+            console.log("Cloud empty — pushed local data:", localSessionCount, "sessions");
+          } else if(ch) {
+            // Merge sessions from both sources so no device loses data
+            const merged = mergeHistories(lh, ch);
+            const mergedCount = Object.values(merged).reduce((a,h)=>a+Object.keys(h||{}).length,0);
+
+            setHistory(merged);
+            try{ localStorage.setItem("gft-history",JSON.stringify(merged)); }catch{}
+
+            // If cloud contributed sessions local didn't have, also take cloud users/programs/goals
+            if(cloudSessionCount > localSessionCount){
+              if(cu){setUsers(cu); try{localStorage.setItem("gft-users",JSON.stringify(cu));}catch{}}
+              if(cp){setPrograms(cp); try{localStorage.setItem("gft-programs",JSON.stringify(cp));}catch{}}
+              if(cg){setGoals(cg); try{localStorage.setItem("gft-goals",JSON.stringify(cg));}catch{}}
+            }
+
+            // Push merged history back to cloud if local had sessions cloud was missing
+            if(mergedCount > cloudSessionCount){
+              syncToSheet("gft-history", JSON.stringify(merged));
+            }
+
+            console.log(`History merged — local:${localSessionCount} cloud:${cloudSessionCount} merged:${mergedCount}`);
           }
         }
       } catch(e){ console.log("Cloud sync skipped:", e.message); }
@@ -7424,15 +7514,17 @@ function App() {
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
   </script>
   <script>
-    if('serviceWorker' in navigator){
+    const isLocalhost = ['localhost','127.0.0.1','::1'].includes(location.hostname);
+    if('serviceWorker' in navigator && !isLocalhost){
       window.addEventListener('load', async ()=>{
         try {
           const reg = await navigator.serviceWorker.register('sw.js');
           // Check for updates periodically
+          const hadController = !!navigator.serviceWorker.controller;
           reg.addEventListener('updatefound', ()=>{
             const newWorker = reg.installing;
             newWorker.addEventListener('statechange', ()=>{
-              if(newWorker.state==='activated' && navigator.serviceWorker.controller){
+              if(newWorker.state==='activated' && hadController){
                 // New SW activated — reload to get fresh assets
                 window.location.reload();
               }
