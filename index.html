@@ -1230,11 +1230,27 @@ const APP_VERSION = "1.0.0";
 // ─── Storage with Google Sheets Sync ─────────────────────────────────────────
 const SYNC_URL = "https://script.google.com/macros/s/AKfycbxPfb0hnqWuOsS8H45JhVLhEqa7Cvo2mWHYGr4wc3LcS_-WIKOmgFKd4P3e88CMFM87/exec";
 
-// Write to localStorage immediately, then push to Google Sheets in background
+// Write to localStorage immediately, then push to Google Sheets in background.
+// For history: only pushes sessions that changed (diff vs current localStorage).
 async function sSet(k, v) {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-  // Background sync — don't await, don't block the UI
-  syncToSheet(k, JSON.stringify(v));
+  if(k === "gft-history") {
+    // Diff against current stored history — only push changed/new sessions
+    let prev = {};
+    try { const raw = localStorage.getItem(k); if(raw) prev = JSON.parse(raw); } catch {}
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+    for(const [uid, sessions] of Object.entries(v||{})) {
+      const prevSessions = prev[uid] || {};
+      for(const [sessionKey, session] of Object.entries(sessions||{})) {
+        const prevSession = prevSessions[sessionKey];
+        if(!prevSession || JSON.stringify(prevSession) !== JSON.stringify(session)) {
+          syncToSheet("gft-session-" + uid + "|" + sessionKey, JSON.stringify(session));
+        }
+      }
+    }
+  } else {
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+    syncToSheet(k, JSON.stringify(v));
+  }
 }
 
 // Read from localStorage (fast, offline-first)
@@ -1255,12 +1271,62 @@ function syncToSheet(key, value) {
   } catch {}
 }
 
-// Pull all data from Google Sheets (used on startup for cross-device sync)
+// Full history sync — pushes every session as its own row (used by SYNC NOW and startup push)
+function syncHistoryToSheet(history) {
+  for(const [uid, sessions] of Object.entries(history||{})) {
+    for(const [sessionKey, session] of Object.entries(sessions||{})) {
+      syncToSheet("gft-session-" + uid + "|" + sessionKey, JSON.stringify(session));
+    }
+  }
+}
+
+// Pull all data from Google Sheets and reconstruct history from per-session keys.
+// Backward compatible with legacy gft-history and gft-history-{uid} formats.
 async function syncFromSheet() {
   try {
     const resp = await fetch(SYNC_URL + "?t=" + Date.now(), { redirect: "follow" });
     if (!resp.ok) return null;
     const data = await resp.json();
+
+    // Reconstruct history from per-session keys: gft-session-{uid}|{sessionKey}
+    const sessionKeys = Object.keys(data).filter(k => k.startsWith("gft-session-"));
+    const reconstructed = {};
+    sessionKeys.forEach(k => {
+      const rest = k.slice("gft-session-".length); // "{uid}|{sessionKey}"
+      const sep = rest.indexOf("|");
+      if(sep < 0) return;
+      const uid = rest.slice(0, sep);
+      const sessionKey = rest.slice(sep + 1);
+      if(!reconstructed[uid]) reconstructed[uid] = {};
+      try { reconstructed[uid][sessionKey] = JSON.parse(data[k]); } catch {}
+    });
+
+    // Merge in legacy gft-history-{uid} format
+    Object.keys(data).filter(k => k.startsWith("gft-history-")).forEach(k => {
+      const uid = k.slice("gft-history-".length);
+      if(!uid.includes("|")) {
+        try {
+          const sessions = JSON.parse(data[k]);
+          if(!reconstructed[uid]) reconstructed[uid] = {};
+          Object.assign(reconstructed[uid], sessions); // per-session takes precedence (set after)
+        } catch {}
+      }
+    });
+
+    // Merge in legacy gft-history blob
+    if(data["gft-history"]) {
+      try {
+        const legacy = JSON.parse(data["gft-history"]);
+        Object.entries(legacy).forEach(([uid, sessions]) => {
+          if(!reconstructed[uid]) reconstructed[uid] = sessions;
+          else Object.keys(sessions).forEach(sk => { if(!reconstructed[uid][sk]) reconstructed[uid][sk] = sessions[sk]; });
+        });
+      } catch {}
+    }
+
+    if(Object.keys(reconstructed).length > 0) {
+      data["gft-history"] = JSON.stringify(reconstructed);
+    }
     return data;
   } catch { return null; }
 }
@@ -1292,15 +1358,16 @@ function mergeHistories(local, cloud) {
   return merged;
 }
 
-// Sync all 4 data keys to Google Sheets at once
+// Sync all data keys to Google Sheets at once
 function syncAllToSheet() {
-  const keys = ["gft-users", "gft-programs", "gft-history", "gft-goals"];
-  keys.forEach(k => {
-    try {
-      const v = localStorage.getItem(k);
-      if (v) syncToSheet(k, v);
-    } catch {}
+  ["gft-users", "gft-programs", "gft-goals"].forEach(k => {
+    try { const v = localStorage.getItem(k); if(v) syncToSheet(k, v); } catch {}
   });
+  // History synced as individual sessions — no cell size limit
+  try {
+    const v = localStorage.getItem("gft-history");
+    if(v) syncHistoryToSheet(JSON.parse(v));
+  } catch {}
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
