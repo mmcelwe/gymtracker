@@ -2117,6 +2117,7 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
               history={history[u.id] || {}}
               onSaveWorkout={(dk, sess) => onSaveWorkout(u.id, dk, sess)}
               onSaveAsProgram={(dayData) => onSaveAsProgram(u.id, dayData)}
+              onUpdateProgram={(p) => onUpdateProgram(u.id, p)}
               onLeave={() => removeAthlete(u.id)}
             />
           </div>
@@ -2482,9 +2483,10 @@ function LeaveBtn({ color, onLeave, userName }) {
 
 
 // ─── Add Exercise Mid-Session Modal ───────────────────────────────────────────
-function AddExerciseModal({ color, history, onAdd, onClose }) {
+function AddExerciseModal({ color, history, onAdd, onClose, canAddToProgram=false }) {
   const [query, setQuery] = useState("");
   const [custom, setCustom] = useState("");
+  const [addToProgram, setAddToProgram] = useState(false);
 
   // Build exercise name list from all history
   const allNames = [...new Set(
@@ -2507,13 +2509,40 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
           <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
 
+        {/* Add to program toggle */}
+        {canAddToProgram&&(
+          <button onClick={()=>setAddToProgram(a=>!a)} style={{
+            display:"flex",alignItems:"center",justifyContent:"space-between",
+            width:"100%",padding:"10px 14px",marginBottom:12,
+            background: addToProgram ? `${color}18` : "#161616",
+            border:`1px solid ${addToProgram ? color+"55" : "#252525"}`,
+            borderRadius:10,cursor:"pointer",flexShrink:0,transition:"all 0.15s"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14}}>📋</span>
+              <span style={{color: addToProgram ? color : "#666",
+                fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                fontSize:13,letterSpacing:2,transition:"color 0.15s"}}>
+                ALSO ADD TO PROGRAM
+              </span>
+            </div>
+            <div style={{width:40,height:22,borderRadius:11,
+              background: addToProgram ? color : "#2a2a2a",
+              position:"relative",transition:"background 0.15s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,
+                left: addToProgram ? 21 : 3,
+                width:16,height:16,borderRadius:8,
+                background:"#fff",transition:"left 0.15s"}}/>
+            </div>
+          </button>
+        )}
+
         {/* Search from history */}
         {allNames.length>0&&(
           <>
             <TouchTextInput value={query} onChange={setQuery} placeholder="Search past exercises..." color={color}/>
             <div style={{flex:1,minHeight:0,overflowY:"auto",marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
               {filtered.slice(0,20).map(name=>(
-                <button key={name} onClick={()=>onAdd(name)}
+                <button key={name} onClick={()=>onAdd(name, addToProgram)}
                   style={{background:"#1a1a1a",border:`1px solid #252525`,borderRadius:10,
                     padding:"12px 16px",cursor:"pointer",textAlign:"left",color:"#F0F0F0",
                     fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:1,
@@ -2539,7 +2568,7 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
           <div style={{flex:1}}>
             <TouchTextInput value={custom} onChange={setCustom} placeholder="Enter exercise name" color={color}/>
           </div>
-          <button onClick={()=>{if(custom.trim())onAdd(custom.trim());}}
+          <button onClick={()=>{if(custom.trim())onAdd(custom.trim(), addToProgram);}}
             disabled={!custom.trim()}
             style={{height:52,paddingInline:18,borderRadius:12,background:custom.trim()?color:"#1a1a1a",
               border:"none",color:custom.trim()?"#000":"#444",cursor:custom.trim()?"pointer":"default",
@@ -2556,7 +2585,7 @@ function AddExerciseModal({ color, history, onAdd, onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // WORKOUT PANEL — fully independent per athlete
 // ══════════════════════════════════════════════════════════════════════════════
-function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, onLeave }) {
+function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, onUpdateProgram, onLeave }) {
   const [phase,setPhase]=useState("pick");
   const [selDay,setSelDay]=useState(null);
   const [exercises,setExercises]=useState([]); // reorderable copy
@@ -3005,12 +3034,19 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     }
   }
 
-  function addExerciseMidSession(exName){
+  function addExerciseMidSession(exName, addToProgram=false){
     const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setExercises(prev=>[...prev,newEx]);
     setCurrentExId(newEx.id);
     setSetIdx(0);
     setShowAddExModal(false);
+    if(addToProgram && program && selDay?.id && onUpdateProgram){
+      const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+      const updated={...program,days:program.days.map(d=>
+        d.id===selDay.id ? {...d,exercises:[...d.exercises,progEx]} : d
+      )};
+      onUpdateProgram(updated);
+    }
   }
 
   function moveExMidSession(fromIdx, toIdx){
@@ -3026,7 +3062,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
 
   const [insertAtIdx, setInsertAtIdx] = useState(null); // index to insert after
 
-  function insertExMidSession(exName, afterIdx){
+  function insertExMidSession(exName, afterIdx, addToProgram=false){
     const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setExercises(prev=>{
       const ex=[...prev];
@@ -3036,6 +3072,22 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setCurrentExId(newEx.id);
     setSetIdx(0);
     setInsertAtIdx(null);
+    if(addToProgram && program && selDay?.id && onUpdateProgram){
+      const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+      const day=program.days.find(d=>d.id===selDay.id);
+      if(day){
+        // Mirror the insert position: find the anchor exercise by id in the program day
+        const anchorEx=exercises[afterIdx];
+        const progAnchorIdx=anchorEx ? day.exercises.findIndex(e=>e.id===anchorEx.id) : -1;
+        const insertAfter=progAnchorIdx>=0 ? progAnchorIdx : day.exercises.length-1;
+        const newProgExes=[...day.exercises];
+        newProgExes.splice(insertAfter+1,0,progEx);
+        const updated={...program,days:program.days.map(d=>
+          d.id===selDay.id ? {...d,exercises:newProgExes} : d
+        )};
+        onUpdateProgram(updated);
+      }
+    }
   }
 
   function flushRestTimer(){
@@ -3507,14 +3559,16 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   return (
     <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#0a0a0a",position:"relative"}}>
       {showAddExModal&&(
-        <AddExerciseModal color={C} history={history||{}} onAdd={name=>{
-          if(insertAtIdx!==null){
-            insertExMidSession(name, insertAtIdx);
-          } else {
-            addExerciseMidSession(name);
-          }
-          setShowAddExModal(false);
-        }} onClose={()=>{setShowAddExModal(false);setInsertAtIdx(null);}}/>
+        <AddExerciseModal color={C} history={history||{}}
+          canAddToProgram={!isFreestyle && !!program && !!selDay?.id}
+          onAdd={(name, addToProgram)=>{
+            if(insertAtIdx!==null){
+              insertExMidSession(name, insertAtIdx, addToProgram);
+            } else {
+              addExerciseMidSession(name, addToProgram);
+            }
+            setShowAddExModal(false);
+          }} onClose={()=>{setShowAddExModal(false);setInsertAtIdx(null);}}/>
       )}
       {timer && (()=>{
         // Compute next exercise preview for rest timer
