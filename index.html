@@ -3040,10 +3040,10 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setCurrentExId(newEx.id);
     setSetIdx(0);
     setShowAddExModal(false);
-    if(addToProgram && program && selDay?.id && onUpdateProgram){
+    if(addToProgram && program?.days && selDay?.id && onUpdateProgram){
       const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
       const updated={...program,days:program.days.map(d=>
-        d.id===selDay.id ? {...d,exercises:[...d.exercises,progEx]} : d
+        d.id===selDay.id ? {...d,exercises:[...(d.exercises||[]),progEx]} : d
       )};
       onUpdateProgram(updated);
     }
@@ -3072,7 +3072,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setCurrentExId(newEx.id);
     setSetIdx(0);
     setInsertAtIdx(null);
-    if(addToProgram && program && selDay?.id && onUpdateProgram){
+    if(addToProgram && program?.days && selDay?.id && onUpdateProgram){
       const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
       const day=program.days.find(d=>d.id===selDay.id);
       if(day){
