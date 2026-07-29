@@ -3916,7 +3916,8 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                   ) : (
                     <SetInput key={loggedSets.length} color={C} setNum={loggedSets.length+1} totalSets={ex.sets} ex={ex}
                       prevSet={loggedSets[loggedSets.length-1]}
-                      recWeight={loggedSets.length===0 ? (calcRecommended(ex)?.kg ?? getPersonalBestData(ex.name)?.weight ?? null) : null}
+                      lastWeight={getLastWorkoutData(ex.name)?.weight??null}
+                      pbWeight={getPersonalBestData(ex.name)?.weight??null}
                       lastReps={loggedSets.length===0 ? getLastWorkoutData(ex.name)?.reps : null}
                       onLog={logSet}
                       useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
@@ -3942,8 +3943,6 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                   {ex._addingExtra ? (
                     <SetInput key={loggedSets.length} color={C} setNum={loggedSets.length+1} totalSets={loggedSets.length+1} ex={ex}
                       prevSet={loggedSets[loggedSets.length-1]}
-                      recWeight={null}
-                      lastReps={null}
                       onLog={logSet}
                       useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
                   ) : (
@@ -4245,10 +4244,8 @@ function EditSetInput({ color, useKg, set, setNum, onSave, onDelete, onCancel })
 }
 
 // ─── Set Input ────────────────────────────────────────────────────────────────
-function SetInput({ color, setNum, totalSets, ex, prevSet, recWeight=null, lastReps=null, onLog, useKg=true, onToggleUnit }) {
-  const initWt = prevSet?.weight ? toDisplayVal(prevSet.weight, useKg)
-               : recWeight ? toDisplayVal(recWeight, useKg)
-               : "";
+function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWeight=null, lastReps=null, onLog, useKg=true, onToggleUnit }) {
+  const initWt = prevSet?.weight ? toDisplayVal(prevSet.weight, useKg) : "";
   const initRp = prevSet?.reps ? String(prevSet.reps)
                : lastReps ? String(lastReps)
                : "";
@@ -4280,15 +4277,54 @@ function SetInput({ color, setNum, totalSets, ex, prevSet, recWeight=null, lastR
       <div style={{marginBottom:12}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <div style={{color:"#555",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>WEIGHT</div>
-          {(parseFloat(wt)||parseFloat(toDisplayVal(prevSet?.weight||recWeight,useKg)))>0&&(
+          {parseFloat(wt||toDisplayVal(prevSet?.weight,useKg))>0&&(
             <button onClick={()=>setShowPlates(true)} style={{background:"none",border:"1px solid #252525",
               borderRadius:7,color:"#555",padding:"4px 10px",cursor:"pointer",fontSize:10,
               fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>🏋️ PLATES</button>
           )}
         </div>
-        <WeightSpinner value={wt} onChange={setWt} useKg={useKg} color={color} prevValue={prevSet?.weight||recWeight}/>
+        <WeightSpinner value={wt} onChange={setWt} useKg={useKg} color={color} prevValue={prevSet?.weight||null}/>
+        {/* Quick weight reference buttons — LAST and BEST */}
+        {!prevSet&&(()=>{
+          const lw = lastWeight&&lastWeight!=="BW" ? parseFloat(lastWeight)||0 : 0;
+          const bw = pbWeight&&pbWeight!=="BW" ? parseFloat(pbWeight)||0 : 0;
+          const lwDisp = lw ? toDisplayVal(lastWeight,useKg) : null;
+          const bwDisp = bw ? toDisplayVal(pbWeight,useKg) : null;
+          const same = lwDisp && bwDisp && lwDisp===bwDisp;
+          if(!lwDisp&&!bwDisp) return null;
+          return (
+            <div style={{display:"flex",gap:6,marginTop:8}}>
+              {lwDisp&&(
+                <button onClick={()=>setWt(lwDisp)} style={{
+                  flex:1,height:44,borderRadius:10,cursor:"pointer",
+                  border:`2px solid ${wt===lwDisp?color:"#252525"}`,
+                  background:wt===lwDisp?`${color}22`:"#141410",
+                  color:wt===lwDisp?color:"#a09870",
+                  fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+                  transition:"all 0.1s"}}>
+                  <span style={{fontSize:9,letterSpacing:2,opacity:0.6}}>{same?"LAST / BEST":"LAST"}</span>
+                  <span style={{fontSize:15,letterSpacing:1}}>{wtDisplay(lastWeight,useKg)}</span>
+                </button>
+              )}
+              {bwDisp&&!same&&(
+                <button onClick={()=>setWt(bwDisp)} style={{
+                  flex:1,height:44,borderRadius:10,cursor:"pointer",
+                  border:`2px solid ${wt===bwDisp?color:"#252525"}`,
+                  background:wt===bwDisp?`${color}22`:"#101418",
+                  color:wt===bwDisp?color:"#7090b0",
+                  fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+                  transition:"all 0.1s"}}>
+                  <span style={{fontSize:9,letterSpacing:2,opacity:0.6}}>BEST</span>
+                  <span style={{fontSize:15,letterSpacing:1}}>{wtDisplay(pbWeight,useKg)}</span>
+                </button>
+              )}
+            </div>
+          );
+        })()}
         {showPlates&&<PlateCalculator
-          weightKg={wt?toStoredKg(wt,useKg):(prevSet?.weight||recWeight)}
+          weightKg={wt?toStoredKg(wt,useKg):prevSet?.weight||null}
           useKg={useKg} color={color} onClose={()=>setShowPlates(false)}/>}
       </div>
 
