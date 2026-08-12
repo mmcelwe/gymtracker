@@ -675,7 +675,9 @@ function SmartWorkoutModal({ equipment, history, weekMuscleData, color, onStart,
                               background:"#111",borderRadius:8,padding:"8px 10px"}}>
                               <div style={{color:color,fontSize:12,fontWeight:700,
                                 fontFamily:"'Barlow Condensed',sans-serif",flex:1}}>{ex.name}</div>
-                              <div style={{color:"#555",fontSize:10}}>{ex.sets}×{ex.reps} · {ex.rest}s rest</div>
+                              <div style={{color:"#555",fontSize:10}}>
+                                {ex.sets}×{isDurationEx(ex)?fmtDuration(exTargetSecs(ex)):ex.reps} · {ex.rest}s rest
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -773,7 +775,7 @@ function calcWeeklyMuscleData(history, weekStartDate) {
       const validSets = (sets||[]).filter(s=>s&&!s.skipped);
       validSets.forEach(s => {
         const w = parseFloat(s.weight)||0;
-        const r = parseFloat(s.reps)||0;
+        const r = setRepUnits(s);   // timed holds count as rep-equivalents
         const rpe = s.rpe||0;
         const rpeMult = rpeMultiplier(rpe);
         const setVolume = w * r * rpeMult;
@@ -1132,7 +1134,7 @@ function buildBackupCsv(users, programs, history, goals) {
 }
 
 function buildHistoryCsv(users, history) {
-  const header = ["Date","Athlete","Exercise","Set #","Weight (lbs)","Reps","RPE","Volume (lbs)"];
+  const header = ["Date","Athlete","Exercise","Set #","Weight (lbs)","Reps","Duration (s)","RPE","Volume (lbs)"];
   const rows = [header];
   users.forEach(u=>{
     const h = history[u.id]||{};
@@ -1142,8 +1144,11 @@ function buildHistoryCsv(users, history) {
       Object.entries(sess.namedLog||{}).forEach(([exName,sets])=>{
         (sets||[]).filter(Boolean).forEach((s,i)=>{
           const wLbs = s.weight==="BW"?"BW":s.weight?parseFloat((parseFloat(s.weight)*2.20462).toFixed(1)):"";
-          const vol = (wLbs&&wLbs!=="BW"&&s.reps)?parseFloat((parseFloat(wLbs)*parseFloat(s.reps)).toFixed(1)):"";
-          rows.push([date, u.name, exName, i+1, wLbs, s.reps||"", s.rpe>0?s.rpe:"", vol]);
+          const units = setRepUnits(s);
+          const vol = (wLbs&&wLbs!=="BW"&&units)?parseFloat((parseFloat(wLbs)*units).toFixed(1)):"";
+          const secs = setSecs(s);
+          rows.push([date, u.name, exName, i+1, wLbs,
+            isDurationSet(s)?"":(s.reps||""), secs||"", s.rpe>0?s.rpe:"", vol]);
         });
       });
     });
@@ -1391,6 +1396,110 @@ function toDisplayVal(kgVal, useKg) {
   if(isNaN(n)) return "";
   if(useKg) return String(n % 1 === 0 ? n : parseFloat(n.toFixed(1)));
   return String(parseFloat((n * 2.20462).toFixed(1)));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TIMED EXERCISES — planks, dead hangs, wall sits, loaded carries
+// ══════════════════════════════════════════════════════════════════════════════
+// An exercise carries mode:"reps" (default) or mode:"duration". A duration
+// exercise stores its target hold in `ex.duration` (seconds); each logged set
+// carries `duration` (seconds) instead of `reps`. Everything else — weight,
+// RPE, sets, rest, supersets — behaves identically, so a weighted plank or a
+// weighted dead hang logs its added load the same way a squat does.
+
+// Names that are inherently timed. Matched loosely so "Weighted Plank",
+// "Side Plank (L)" and "RKC Plank" all resolve without a lookup table.
+// Deliberately narrow: "hang" alone would swallow Hang Clean / Hang Snatch.
+const TIMED_NAME_PATTERNS = [
+  /\bplanks?\b/i,
+  /\bdead[- ]?hang/i, /\bbar hang/i, /\bpassive hang/i, /\bactive hang/i,
+  /\bwall sit/i,
+  /\bhollow (hold|body)/i,
+  /\bl[- ]?sit/i,
+  /\bhold\b/i,          // Superman Hold, Iso Hold, Chin-up Hold, Bridge Hold
+  /\biso(metric)?\b/i,
+  /\b(farmer'?s? (walk|carry)|suitcase carry|loaded carry|overhead carry)\b/i,
+];
+
+function isTimedByName(name) {
+  if(!name) return false;
+  return TIMED_NAME_PATTERNS.some(re => re.test(name));
+}
+
+// Seconds from a loose value: 45, "45", "45s", "1:30", "0:45"
+function parseDurationVal(v) {
+  if(v == null || v === "") return 0;
+  if(typeof v === "number") return isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+  const str = String(v).trim();
+  const mmss = str.match(/^(\d+):([0-5]?\d)$/);
+  if(mmss) return parseInt(mmss[1])*60 + parseInt(mmss[2]);
+  const n = parseFloat(str);
+  return isNaN(n) ? 0 : Math.max(0, Math.round(n));
+}
+
+// 45 → "45s"; 90 → "1:30"; 125 → "2:05"
+function fmtDuration(secs) {
+  const s = parseDurationVal(secs);
+  if(s < 60) return `${s}s`;
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+}
+
+const DEFAULT_HOLD_SECS = 45;
+
+// Resolve an exercise's tracking mode. An explicit `mode` always wins; older
+// programs are inferred so "Plank / 45s" from the starter templates and any
+// hand-typed "Dead Hang" behave as timed work without needing a migration.
+function exMode(ex) {
+  if(ex?.mode === "duration" || ex?.mode === "reps") return ex.mode;
+  if(typeof ex?.reps === "string" && /^\d+\s*s$/i.test(ex.reps.trim())) return "duration";
+  return isTimedByName(ex?.name) ? "duration" : "reps";
+}
+function isDurationEx(ex) { return exMode(ex) === "duration"; }
+
+// Target hold in seconds for a duration exercise
+function exTargetSecs(ex) {
+  const d = parseDurationVal(ex?.duration);
+  if(d > 0) return d;
+  // Starter templates encode a hold as reps:"45s". Only that explicit form
+  // counts — a bare "12" is a rep count, and reading it as 12 seconds would
+  // silently mangle the target when an exercise is switched to timed.
+  if(typeof ex?.reps === "string" && /^\d+\s*s$/i.test(ex.reps.trim())) {
+    const legacy = parseDurationVal(ex.reps);
+    if(legacy > 0) return legacy;
+  }
+  return DEFAULT_HOLD_SECS;
+}
+
+// A logged set is a timed set when it carries a duration
+function isDurationSet(s) { return !!s && parseDurationVal(s.duration) > 0; }
+function setSecs(s) { return parseDurationVal(s?.duration); }
+
+// Time-under-tension → rep-equivalent, so timed holds contribute to volume and
+// muscle-stimulus totals on the same scale as straight sets instead of counting
+// as zero. ~3s of hold ≈ one rep of work.
+const TUT_SECS_PER_REP = 3;
+function setRepUnits(s) {
+  if(isDurationSet(s)) return setSecs(s) / TUT_SECS_PER_REP;
+  return parseFloat(s?.reps) || 0;
+}
+// Does this set carry anything loggable? (replaces bare `s.reps` truthiness)
+function setHasWork(s) { return !!s && (!!s.reps || isDurationSet(s)); }
+
+// Short "12" / "45s" label for a logged set
+function setAmountLabel(s) {
+  return isDurationSet(s) ? fmtDuration(setSecs(s)) : String(s?.reps ?? "");
+}
+
+// A goal targets a hold length rather than a rep count
+function isGoalTimed(goal) { return !!goal && parseDurationVal(goal.duration) > 0; }
+function goalSecs(goal) { return parseDurationVal(goal?.duration); }
+
+// Defaults for a freshly added exercise. Timed names arrive already set to
+// duration mode; `reps` is kept so flipping the editor toggle back has a value.
+function newExFields(name) {
+  return isTimedByName(name)
+    ? {reps:"10", mode:"duration", duration:DEFAULT_HOLD_SECS}
+    : {reps:"10", mode:"reps"};
 }
 
 function Btn({ label, icon, onClick, color="#F0F0F0", bg="rgba(255,255,255,0.07)", border="transparent",
@@ -1687,6 +1796,111 @@ function RepsSpinner({ value, onChange, color, placeholder="10" }) {
             flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>+</button>
       </div>
       {showPad&&<NumPad value={num||""} label="Reps" unit="reps"
+        color={color} onConfirm={v=>{onChange(v);setShowPad(false);}} onClose={()=>setShowPad(false)}/>}
+    </div>
+  );
+}
+
+// ─── DurationSpinner — hold-time picker with a live stopwatch ─────────────────
+// Two ways in: nudge the number to a planned hold, or run the stopwatch during
+// the set and let it fill the value on stop — the usual flow for a dead hang or
+// a plank where you don't know the number until you drop.
+function DurationSpinner({ value, onChange, color, placeholder=DEFAULT_HOLD_SECS }) {
+  const [showPad, setShowPad] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0);      // ms on the running clock
+  const startedAtRef = useRef(null);
+  const rafRef = useRef(null);
+  const holdRef = useRef(null);
+
+  const secs = parseDurationVal(value);
+
+  function adj(d){ onChange(String(Math.max(0, secs + d))); }
+  // adj closes over `secs`, so the repeat interval calls through a fresh copy
+  const adjRef = useRef(adj);
+  useEffect(()=>{ adjRef.current = adj; });
+  function beginHold(d){ holdRef.current = setInterval(()=>adjRef.current(d), 130); }
+  function endHold(){ clearInterval(holdRef.current); }
+
+  // Stopwatch tick — wall-clock based so backgrounding the tab can't drift it
+  useEffect(()=>{
+    if(!running) return;
+    const tick=()=>{
+      setElapsed(Date.now() - startedAtRef.current);
+      rafRef.current = setTimeout(tick, 100);
+    };
+    tick();
+    return ()=>clearTimeout(rafRef.current);
+  },[running]);
+
+  useEffect(()=>()=>{ clearInterval(holdRef.current); clearTimeout(rafRef.current); },[]);
+
+  function startWatch(){
+    startedAtRef.current = Date.now();
+    setElapsed(0);
+    setRunning(true);
+  }
+  function stopWatch(){
+    const held = Math.max(1, Math.round((Date.now() - startedAtRef.current)/1000));
+    setRunning(false);
+    setElapsed(0);
+    onChange(String(held));
+  }
+
+  const liveSecs = Math.floor(elapsed/1000);
+  const display = running ? fmtDuration(liveSecs) : (secs === 0 ? fmtDuration(placeholder) : fmtDuration(secs));
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <button onPointerDown={()=>{if(running)return;adj(-5);beginHold(-5);}} onPointerUp={endHold} onPointerLeave={endHold}
+          disabled={running}
+          style={{width:60,height:60,borderRadius:14,background:"#1a1a1a",
+            border:`2px solid ${running?"#252525":color+"44"}`,color:running?"#2a2a2a":color,fontSize:30,
+            cursor:running?"default":"pointer",
+            flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>−</button>
+
+        <div onClick={()=>{if(!running)setShowPad(true);}} tabIndex={0}
+          onKeyDown={e=>{
+            if(running) return;
+            if(e.key==="Enter"||e.key==="Escape"){e.target.blur();return;}
+            if(e.key==="Backspace"){onChange(String(value||"").slice(0,-1));e.preventDefault();return;}
+            if(/^[0-9]$/.test(e.key)){onChange(String(value||"")+e.key);e.preventDefault();}
+          }}
+          style={{
+          flex:1,height:60,borderRadius:14,background:running?`${color}14`:"#111",
+          border:`2px solid ${running?color:color+"55"}`,cursor:running?"default":"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center",gap:6,position:"relative",
+          outline:"none"}}>
+          <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,
+            color:running?color:(secs===0?"#383838":color),letterSpacing:1,pointerEvents:"none"}}>
+            {display}
+          </span>
+          <span style={{color:running?color+"88":"#333",fontSize:13,pointerEvents:"none",position:"absolute",right:12}}>
+            {running?"● REC":"hold"}
+          </span>
+        </div>
+
+        <button onPointerDown={()=>{if(running)return;adj(5);beginHold(5);}} onPointerUp={endHold} onPointerLeave={endHold}
+          disabled={running}
+          style={{width:60,height:60,borderRadius:14,background:"#1a1a1a",
+            border:`2px solid ${running?"#252525":color+"44"}`,color:running?"#2a2a2a":color,fontSize:30,
+            cursor:running?"default":"pointer",
+            flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>+</button>
+      </div>
+
+      {/* Stopwatch — time the hold live, drop, tap stop */}
+      <button onClick={()=>running?stopWatch():startWatch()}
+        style={{width:"100%",height:46,marginTop:8,borderRadius:12,cursor:"pointer",
+          background:running?color:"#141414",
+          border:`2px solid ${running?color:color+"33"}`,
+          color:running?"#000":color,
+          fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:14,letterSpacing:3,
+          display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.12s"}}>
+        {running ? <>⏹ STOP — {fmtDuration(liveSecs)}</> : <>⏱ START TIMER</>}
+      </button>
+
+      {showPad&&<NumPad value={secs||""} label="Hold (seconds)" unit="sec"
         color={color} onConfirm={v=>{onChange(v);setShowPad(false);}} onClose={()=>setShowPad(false)}/>}
     </div>
   );
@@ -2304,13 +2518,21 @@ function SessionScreen({ activeIds: initialIds, users, programs, history, goals,
                                               style={{width:60,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
                                                 color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
                                                 textAlign:"center",outline:"none"}}/>
-                                            <span style={{color:"#333",fontSize:10}}>kg ×</span>
-                                            <input type="number" value={s.reps||""} placeholder="0"
-                                              onChange={e=>updateSet(date,exName,si,{reps:e.target.value})}
-                                              style={{width:50,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
-                                                color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
-                                                textAlign:"center",outline:"none"}}/>
-                                            <span style={{color:"#333",fontSize:10}}>reps</span>
+                                            <span style={{color:"#333",fontSize:10}}>kg {isDurationSet(s)?"·":"×"}</span>
+                                            {isDurationSet(s) ? (
+                                              <input type="number" value={setSecs(s)||""} placeholder="0"
+                                                onChange={e=>updateSet(date,exName,si,{duration:parseDurationVal(e.target.value)})}
+                                                style={{width:50,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                  color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                  textAlign:"center",outline:"none"}}/>
+                                            ) : (
+                                              <input type="number" value={s.reps||""} placeholder="0"
+                                                onChange={e=>updateSet(date,exName,si,{reps:e.target.value})}
+                                                style={{width:50,background:"#1a1a1a",border:"1px solid #252525",borderRadius:6,
+                                                  color:"#F0F0F0",padding:"6px 8px",fontSize:13,fontFamily:"'Bebas Neue',sans-serif",
+                                                  textAlign:"center",outline:"none"}}/>
+                                            )}
+                                            <span style={{color:"#333",fontSize:10}}>{isDurationSet(s)?"sec":"reps"}</span>
                                             <span style={{color:"#333",fontSize:10,marginLeft:4}}>RPE</span>
                                             <input type="number" value={s.rpe||""} placeholder="—" min="1" max="10"
                                               onChange={e=>updateSet(date,exName,si,{rpe:parseFloat(e.target.value)||0})}
@@ -2567,9 +2789,11 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const [dragOver,setDragOver]=useState(null);
   const dragSrc=useState(null);
   const [editingSet,setEditingSet]=useState(null); // {exId, setIdx} or null
+  const [editingSetupId,setEditingSetupId]=useState(null); // exercise id whose setup is open for editing
   const sessionKeyRef=useRef(null); // unique key for this session, set on first finish
   const totalRestMsRef=useRef(0);   // accumulated rest milliseconds (excluded from active time)
   const restStartRef=useRef(null);  // timestamp when current rest timer began
+  const setupSaveRef=useRef(null);  // debounce for writing setup edits back to the program
   const scrollRef=useRef(null);     // ref to the main scrollable content div
   const scrollIntervalRef=useRef(null); // interval for hold-to-scroll
   const [sessionMode,setSessionMode]=useState("traditional"); // "traditional" | "circuit"
@@ -2677,9 +2901,12 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       const sets = (sess.namedLog||{})[exName];
       if(sets&&sets.length) {
         const best = sets.filter(Boolean).reduce((b,s)=>{
-          return (parseFloat(s.weight)||0)>(parseFloat(b?.weight)||0)?s:b;
+          const sw=parseFloat(s.weight)||0, bw=parseFloat(b?.weight)||0;
+          if(sw!==bw) return sw>bw?s:b;
+          // Equal load (the usual case for bodyweight holds) — longest hold wins
+          return setSecs(s)>setSecs(b)?s:b;
         }, sets[0]);
-        return best; // {weight (kg), reps, rpe}
+        return best; // {weight (kg), reps|duration, rpe}
       }
     }
     return null;
@@ -2830,7 +3057,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     const exCopy = day.exercises.map(e=>({...e}));
     Object.keys(namedLog).forEach(name=>{
       if(!programExNames.includes(name)){
-        exCopy.push({id:mkId(),name,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}});
+        exCopy.push({id:mkId(),name,sets:3,...newExFields(name),rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}});
       }
     });
 
@@ -2840,7 +3067,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
       const sets = namedLog[ex.name];
       if(sets && sets.length > 0){
         logMap[ex.id] = sets.map(s=>({
-          weight: s.weight, reps: s.reps, rpe: s.rpe||0
+          weight: s.weight, reps: s.reps, duration: s.duration, rpe: s.rpe||0
         }));
       }
     });
@@ -2998,19 +3225,37 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   }
 
   function addExerciseMidSession(exName, addToProgram=false){
-    const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    const newEx={id:mkId(),name:exName,sets:3,...newExFields(exName),rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setExercises(prev=>[...prev,newEx]);
     setCurrentExId(newEx.id);
     setSetIdx(0);
     setShowAddExModal(false);
     if(addToProgram && program?.days && selDay?.id && onUpdateProgram){
-      const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+      const progEx={id:mkId(),name:exName,sets:3,...newExFields(exName),rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
       const updated={...program,days:program.days.map(d=>
         d.id===selDay.id ? {...d,exercises:[...(d.exercises||[]),progEx]} : d
       )};
       onUpdateProgram(updated);
     }
   }
+
+  // Setup notes are worth correcting the moment you find the rack pin is a hole
+  // off, so they're editable during the workout. The edit shows immediately and
+  // is written back to the program day (debounced) so it's right next time too.
+  function updateSetupMidSession(exId, value){
+    setExercises(prev=>prev.map(x=>x.id===exId?{...x,setup:value}:x));
+    if(!program?.days || !selDay?.id || !onUpdateProgram) return;  // freestyle: session-only
+    clearTimeout(setupSaveRef.current);
+    setupSaveRef.current = setTimeout(()=>{
+      const updated={...program, days:program.days.map(d=>
+        d.id===selDay.id
+          ? {...d, exercises:(d.exercises||[]).map(pe=>pe.id===exId?{...pe,setup:value}:pe)}
+          : d
+      )};
+      onUpdateProgram(updated);
+    }, 700);
+  }
+  useEffect(()=>()=>clearTimeout(setupSaveRef.current),[]);
 
   function moveExMidSession(fromIdx, toIdx){
     if(toIdx<0) return;
@@ -3026,7 +3271,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
   const [insertAtIdx, setInsertAtIdx] = useState(null); // index to insert after
 
   function insertExMidSession(exName, afterIdx, addToProgram=false){
-    const newEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+    const newEx={id:mkId(),name:exName,sets:3,...newExFields(exName),rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
     setExercises(prev=>{
       const ex=[...prev];
       ex.splice(afterIdx+1,0,newEx);
@@ -3036,7 +3281,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
     setSetIdx(0);
     setInsertAtIdx(null);
     if(addToProgram && program?.days && selDay?.id && onUpdateProgram){
-      const progEx={id:mkId(),name:exName,sets:3,reps:"10",rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
+      const progEx={id:mkId(),name:exName,sets:3,...newExFields(exName),rest:60,setup:"",groupId:null,progression:{type:"fixed",value:0}};
       const day=program.days.find(d=>d.id===selDay.id);
       if(day){
         // Mirror the insert position: find the anchor exercise by id in the program day
@@ -3464,7 +3709,11 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                   <div key={ex.id} style={{display:"flex",alignItems:"center",gap:8,
                     background:"#111",borderRadius:8,padding:"8px 10px"}}>
                     <div style={{color:C,fontSize:11,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",flex:1}}>{ex.name}</div>
-                    <div style={{color:"#555",fontSize:10}}>{sets.length} sets · {bestSet?.reps||ex.reps} reps</div>
+                    <div style={{color:"#555",fontSize:10}}>
+                      {isDurationEx(ex)
+                        ? `${sets.length} sets · ${fmtDuration(setSecs(bestSet)||exTargetSecs(ex))} hold`
+                        : `${sets.length} sets · ${bestSet?.reps||ex.reps} reps`}
+                    </div>
                   </div>
                 );
               })}
@@ -3474,8 +3723,13 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
               // Build exercise data from what was logged
               const exData=exercises.map(ex=>{
                 const sets=(logged[ex.id]||[]).filter(Boolean);
+                const base={name:ex.name,sets:Math.max(ex.sets,sets.length),rest:ex.rest||60};
+                if(isDurationEx(ex)){
+                  const maxSecs=sets.length?Math.max(...sets.map(setSecs)):0;
+                  return {...base,mode:"duration",duration:maxSecs||exTargetSecs(ex),reps:parseInt(ex.reps)||10};
+                }
                 const maxReps=sets.length?Math.max(...sets.map(s=>parseInt(s.reps)||0)):parseInt(ex.reps)||10;
-                return {name:ex.name,sets:Math.max(ex.sets,sets.length),reps:maxReps,rest:ex.rest||60};
+                return {...base,mode:"reps",reps:maxReps};
               });
               onSaveAsProgram({label:name,defaultMode:sessionMode,exercises:exData});
               setSavedAsProgram(true);
@@ -3753,7 +4007,9 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                     color:done?"#444":isActive?"#F0F0F0":"#888",letterSpacing:1,lineHeight:1,
                     overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.name}</div>
                   <div style={{color:"#383838",fontSize:11,marginTop:2}}>
-                    {ex.sets} sets · {ex.reps} reps
+                    {isDurationEx(ex)
+                      ? <>{ex.sets} sets · {fmtDuration(exTargetSecs(ex))} hold</>
+                      : <>{ex.sets} sets · {ex.reps} reps</>}
                     {loggedSets.length>0&&<span style={{color:done?"#A8FF3E44":C+"88"}}> · {loggedSets.length}/{ex.sets} done</span>}
                   </div>
                   {(()=>{
@@ -3776,11 +4032,45 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                       </div>
                     );
                   })()}
-                  {ex.setup&&isActive&&(
-                    <div style={{marginTop:5,padding:"5px 9px",background:"#111",
-                      border:`1px solid ${C}22`,borderRadius:7,
-                      color:"#666",fontSize:11,lineHeight:1.5,
-                      borderLeft:`3px solid ${C}55`}}>
+                  {/* Setup notes — read-only until you tap, then editable in place */}
+                  {isActive&&(
+                    <div style={{marginTop:5}} onClick={e=>e.stopPropagation()}>
+                      {editingSetupId===ex.id ? (
+                        <div style={{padding:"7px 9px",background:"#111",
+                          border:`1px solid ${C}44`,borderRadius:7,borderLeft:`3px solid ${C}`}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                            <div style={{color:"#555",fontSize:9,letterSpacing:2,
+                              fontFamily:"'Barlow Condensed',sans-serif"}}>🔧 SETUP</div>
+                            <button onClick={()=>setEditingSetupId(null)}
+                              style={{background:`${C}22`,border:`1px solid ${C}55`,borderRadius:6,
+                                color:C,padding:"3px 10px",cursor:"pointer",fontSize:10,
+                                fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>DONE</button>
+                          </div>
+                          <TouchTextInput
+                            value={ex.setup||""}
+                            onChange={v=>updateSetupMidSession(ex.id,v)}
+                            placeholder="e.g. Safety bars pin 7 from bottom, barbell 3 from top"
+                            color={`${C}88`} multiline={true}/>
+                        </div>
+                      ) : (
+                        <button onClick={()=>setEditingSetupId(ex.id)}
+                          style={{width:"100%",textAlign:"left",cursor:"pointer",
+                            padding:"5px 9px",background:"#111",
+                            border:`1px solid ${C}22`,borderRadius:7,
+                            borderLeft:`3px solid ${C}55`,
+                            color:ex.setup?"#666":"#3a3a3a",fontSize:11,lineHeight:1.5,
+                            fontFamily:"'Barlow',sans-serif",
+                            display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{flex:1}}>🔧 {ex.setup||"Add setup — rack pins, blocks, platform height…"}</span>
+                          <span style={{color:"#2a2a2a",fontSize:9}}>✎</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!isActive&&ex.setup&&(
+                    <div style={{marginTop:4,padding:"4px 8px",background:"#0d0d0d",
+                      border:"1px solid #1e1e1e",borderRadius:6,
+                      color:"#4a4a4a",fontSize:10,lineHeight:1.4}}>
                       🔧 {ex.setup}
                     </div>
                   )}
@@ -3848,7 +4138,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                             borderRadius:6,padding:"3px 8px",fontSize:10,whiteSpace:"nowrap",
                             cursor:"pointer",color:"inherit",display:"flex",alignItems:"center",gap:4}}>
                           <span style={{color:isEditing?"#fff":done?"#444":C,fontWeight:700}}>{wtDisplay(s.weight,useKg)}</span>
-                          <span style={{color:"#333"}}>×{s.reps}</span>
+                          <span style={{color:"#333"}}>{isDurationSet(s)?fmtDuration(setSecs(s)):`×${s.reps}`}</span>
                           <span style={{color:"#2a2a2a",fontSize:9}}>✎</span>
                         </button>
                       );
@@ -3862,7 +4152,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                 <div style={{borderTop:`1px solid ${C}22`,padding:"12px 14px"}}>
                   {editingSet?.exId===ex.id ? (
                     <EditSetInput
-                      color={C} useKg={useKg}
+                      color={C} useKg={useKg} ex={ex}
                       set={loggedSets[editingSet.si]}
                       setNum={editingSet.si+1}
                       onSave={d=>saveEditedSet(ex.id,editingSet.si,d)}
@@ -3875,6 +4165,7 @@ function WorkoutPanel({ user, program, history, onSaveWorkout, onSaveAsProgram, 
                       lastWeight={getLastWorkoutData(ex.name)?.weight??null}
                       pbWeight={getPersonalBestData(ex.name)?.weight??null}
                       lastReps={loggedSets.length===0 ? getLastWorkoutData(ex.name)?.reps : null}
+                      lastSecs={loggedSets.length===0 ? setSecs(getLastWorkoutData(ex.name)) : null}
                       onLog={logSet}
                       useKg={useKg} onToggleUnit={()=>setUseKg(k=>!k)}/>
                   )}
@@ -4142,14 +4433,23 @@ function PlateCalculator({ weightKg, useKg, color, onClose }) {
 }
 
 // ─── Edit Set Input ──────────────────────────────────────────────────────────
-function EditSetInput({ color, useKg, set, setNum, onSave, onDelete, onCancel }) {
+function EditSetInput({ color, useKg, set, setNum, ex, onSave, onDelete, onCancel }) {
+  // A set that was logged as timed stays timed even if the exercise was since
+  // switched back to reps — edit what was actually recorded.
+  const timed = isDurationSet(set) || (!set?.reps && isDurationEx(ex));
   const [wt, setWt] = useState(set?.weight ? toDisplayVal(set.weight, useKg) : "");
   const [rp, setRp] = useState(set?.reps ? String(set.reps) : "");
+  const [dur, setDur] = useState(isDurationSet(set) ? String(setSecs(set)) : "");
   const [rpe, setRpe] = useState(set?.rpe || 0);
 
   function submit(){
     const storedWt = wt ? toStoredKg(wt, useKg) : (set?.weight || "BW");
-    onSave({weight: storedWt, reps: rp || set?.reps, rpe});
+    if(timed){
+      const secs = parseDurationVal(dur) || setSecs(set) || exTargetSecs(ex);
+      onSave({weight: storedWt, duration: secs, reps: null, rpe});
+    } else {
+      onSave({weight: storedWt, reps: rp || set?.reps, rpe});
+    }
   }
 
   const rpeLabel=rpe===0?"":rpe<=3?"Easy":rpe<=5?"Moderate":rpe<=7?"Hard":rpe<=8?"Very Hard":rpe===9?"Max−1":"Max Effort";
@@ -4168,8 +4468,12 @@ function EditSetInput({ color, useKg, set, setNum, onSave, onDelete, onCancel })
         <WeightSpinner value={wt} onChange={setWt} useKg={useKg} color={color}/>
       </div>
       <div style={{marginBottom:12}}>
-        <div style={{color:"#555",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>REPS</div>
-        <RepsSpinner value={rp} onChange={setRp} color={color}/>
+        <div style={{color:"#555",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>
+          {timed?"HOLD TIME":"REPS"}
+        </div>
+        {timed
+          ? <DurationSpinner value={dur} onChange={setDur} color={color} placeholder={exTargetSecs(ex)}/>
+          : <RepsSpinner value={rp} onChange={setRp} color={color}/>}
       </div>
       <div style={{marginBottom:12}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
@@ -4200,13 +4504,18 @@ function EditSetInput({ color, useKg, set, setNum, onSave, onDelete, onCancel })
 }
 
 // ─── Set Input ────────────────────────────────────────────────────────────────
-function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWeight=null, lastReps=null, onLog, useKg=true, onToggleUnit }) {
+function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWeight=null, lastReps=null, lastSecs=null, onLog, useKg=true, onToggleUnit }) {
+  const timed = isDurationEx(ex);
+  const targetSecs = exTargetSecs(ex);
   const initWt = prevSet?.weight ? toDisplayVal(prevSet.weight, useKg) : "";
   const initRp = prevSet?.reps ? String(prevSet.reps)
                : lastReps ? String(lastReps)
                : "";
+  // Timed sets start blank so the stopwatch (or a deliberate nudge) fills them —
+  // pre-filling the last hold would quietly log a time you never actually held.
   const [wt,setWt]=useState(initWt);
   const [rp,setRp]=useState(initRp);
+  const [dur,setDur]=useState("");
   const [rpe,setRpe]=useState(0);
   const [showPlates,setShowPlates]=useState(false);
 
@@ -4214,8 +4523,13 @@ function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWe
     // Convert entered weight to kg for storage
     const rawWt = wt || "";
     const storedWt = rawWt === "" ? (prevSet?.weight || "BW") : toStoredKg(rawWt, useKg);
-    onLog({weight: storedWt, reps: rp||ex.reps, rpe});
-    setWt(""); setRp(""); setRpe(0);
+    if(timed){
+      const secs = parseDurationVal(dur) || setSecs(prevSet) || targetSecs;
+      onLog({weight: storedWt, duration: secs, rpe});
+    } else {
+      onLog({weight: storedWt, reps: rp||ex.reps, rpe});
+    }
+    setWt(""); setRp(""); setDur(""); setRpe(0);
   }
 
   const rpeLabel=rpe===0?"":rpe<=3?"Easy":rpe<=5?"Moderate":rpe<=7?"Hard":rpe<=8?"Very Hard":rpe===9?"Max−1":"Max Effort";
@@ -4284,6 +4598,44 @@ function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWe
           useKg={useKg} color={color} onClose={()=>setShowPlates(false)}/>}
       </div>
 
+      {timed ? (
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{color:"#555",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>HOLD TIME</div>
+          <div style={{color:"#333",fontSize:10,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif"}}>
+            TARGET {fmtDuration(targetSecs)}
+          </div>
+        </div>
+        <DurationSpinner value={dur} onChange={setDur} color={color} placeholder={targetSecs}/>
+        {/* Quick hold buttons — target, last session, previous set, common holds */}
+        <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+          {(()=>{
+            const opts=[];
+            if(prevSet&&setSecs(prevSet)>0) opts.push({s:setSecs(prevSet),label:"LAST SET",tint:"#0f1a1f",fg:"#7daadd"});
+            else if(lastSecs>0) opts.push({s:lastSecs,label:"LAST TIME",tint:"#0f1f0f",fg:"#7ddd7d"});
+            opts.push({s:targetSecs,label:"TARGET",tint:"#1a1a1a",fg:"#888"});
+            // A couple of common holds, skipping any already offered above
+            [30,60].forEach(n=>{ if(!opts.some(o=>o.s===n)) opts.push({s:n,label:null,tint:"#1a1a1a",fg:"#888"}); });
+            return opts.map((o,i)=>{
+              const isActive=parseDurationVal(dur)===o.s;
+              return (
+                <button key={i} onClick={()=>setDur(String(o.s))} style={{
+                  flex:1,minWidth:64,height:o.label?42:42,borderRadius:10,cursor:"pointer",
+                  border:`2px solid ${isActive?color:"#252525"}`,
+                  background:isActive?`${color}33`:o.tint,
+                  color:isActive?color:o.fg,
+                  fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,
+                  transition:"all 0.1s"}}>
+                  {o.label&&<span style={{fontSize:8,letterSpacing:2,opacity:0.6}}>{o.label}</span>}
+                  <span style={{fontSize:15,letterSpacing:1}}>{fmtDuration(o.s)}</span>
+                </button>
+              );
+            });
+          })()}
+        </div>
+      </div>
+      ) : (
       <div style={{marginBottom:14}}>
         <div style={{color:"#555",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>REPS</div>
         <RepsSpinner value={rp} onChange={setRp} color={color} placeholder={String(ex.reps)}/>
@@ -4337,6 +4689,7 @@ function SetInput({ color, setNum, totalSets, ex, prevSet, lastWeight=null, pbWe
           })}
         </div>
       </div>
+      )}
 
       {/* RPE */}
       <div style={{marginBottom:14}}>
@@ -4437,7 +4790,9 @@ function InlineTimer({ duration, color, onDone, onSkip, nextEx, nextRec, nextLas
               <div style={{color:"#555",fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif"}}>
                 SET {nextSetsLogged+1}/{nextEx.sets}
               </div>
-              <div style={{color:"#333",fontSize:10}}>{nextEx.reps} reps · {nextEx.rest}s rest</div>
+              <div style={{color:"#333",fontSize:10}}>
+                {isDurationEx(nextEx)?`${fmtDuration(exTargetSecs(nextEx))} hold`:`${nextEx.reps} reps`} · {nextEx.rest}s rest
+              </div>
             </div>
           </div>
 
@@ -4460,7 +4815,7 @@ function InlineTimer({ duration, color, onDone, onSkip, nextEx, nextRec, nextLas
                 )}
                 {!nextRec && nextLastData && (
                   <div style={{color:"#333",fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
-                    LAST: {nextLastData.reps} reps {nextLastData.rpe>0?`@ RPE ${nextLastData.rpe}`:""}
+                    LAST: {isDurationSet(nextLastData)?fmtDuration(setSecs(nextLastData)):`${nextLastData.reps} reps`} {nextLastData.rpe>0?`@ RPE ${nextLastData.rpe}`:""}
                   </div>
                 )}
               </div>
@@ -4770,18 +5125,21 @@ function ManageScreen({ users, programs, history, goals, onUpdateUser, onAddUser
                                     style={{width:80,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
                                       color:"#F0F0F0",fontSize:16,padding:"8px 10px",outline:"none",boxSizing:"border-box"}}/>
                                 </div>
-                                <span style={{color:"#333"}}>×</span>
+                                <span style={{color:"#333"}}>{isDurationSet(s)?"·":"×"}</span>
                                 <div style={{display:"flex",alignItems:"center",gap:4}}>
                                   <input type="number"
-                                    defaultValue={s.reps||""}
+                                    defaultValue={isDurationSet(s)?setSecs(s):(s.reps||"")}
                                     onChange={e=>{
                                       const ns=JSON.parse(JSON.stringify(editingSession));
-                                      ns.sess.namedLog[exName][si]={...ns.sess.namedLog[exName][si],reps:e.target.value};
+                                      const cur=ns.sess.namedLog[exName][si];
+                                      ns.sess.namedLog[exName][si]=isDurationSet(s)
+                                        ? {...cur, duration:parseDurationVal(e.target.value)}
+                                        : {...cur, reps:e.target.value};
                                       setEditingSession(ns);
                                     }}
                                     style={{width:60,background:"#0d0d0d",border:`1px solid ${u.color}33`,borderRadius:8,
                                       color:"#F0F0F0",fontSize:16,padding:"8px 10px",outline:"none",boxSizing:"border-box"}}/>
-                                  <span style={{color:"#383838",fontSize:11}}>reps</span>
+                                  <span style={{color:"#383838",fontSize:11}}>{isDurationSet(s)?"sec":"reps"}</span>
                                 </div>
                                 <div style={{display:"flex",alignItems:"center",gap:4}}>
                                   <span style={{color:"#383838",fontSize:11}}>RPE</span>
@@ -5743,9 +6101,29 @@ function ExEditor({ ex, num, color, useKg=false, onUpdate, onDelete }) {
         <button onClick={onDelete} style={{background:"none",border:"1px solid #222",borderRadius:8,
           color:"#444",padding:"10px 14px",cursor:"pointer",marginTop:4}}>🗑</button>
       </div>
+      {/* Reps vs. timed hold — planks, dead hangs, wall sits, carries */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <div style={{color:"#444",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>
+          TRACK BY
+        </div>
+        <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:"1px solid #252525"}}>
+          {[{v:"reps",l:"REPS"},{v:"duration",l:"⏱ TIME"}].map(({v:mv,l})=>(
+            <button key={mv} onClick={()=>onUpdate(mv==="duration"
+                ? {mode:"duration", duration:exTargetSecs(ex)}
+                : {mode:"reps", reps:String(parseInt(ex.reps)||10)})}
+              style={{padding:"6px 14px",background:exMode(ex)===mv?`${color}22`:"#141414",
+                border:"none",color:exMode(ex)===mv?color:"#555",
+                fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:11,
+                letterSpacing:1,cursor:"pointer"}}>{l}</button>
+          ))}
+        </div>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
         <BigStepper label="SETS" value={ex.sets} onChange={v=>onUpdate({sets:v})} min={1} max={20} color={color}/>
-        <BigStepper label="REPS" value={parseInt(ex.reps)||10} onChange={v=>onUpdate({reps:String(v)})} min={1} max={50} color={color}/>
+        {isDurationEx(ex)
+          ? <BigStepper label="HOLD" value={exTargetSecs(ex)} onChange={v=>onUpdate({mode:"duration",duration:v})}
+              min={5} max={600} step={5} color={color} unit="s"/>
+          : <BigStepper label="REPS" value={parseInt(ex.reps)||10} onChange={v=>onUpdate({reps:String(v)})} min={1} max={50} color={color}/>}
         <BigStepper label="REST (s)" value={ex.rest} onChange={v=>onUpdate({rest:v})} min={0} max={600} step={15} color={color} unit="s"/>
       </div>
       <div>
@@ -5924,7 +6302,7 @@ function buildVolumeData(history, period, useImperial) {
       key=String(dt.getFullYear());
     }
     const vol=Object.values(sess.namedLog||{}).flat().filter(Boolean)
-      .reduce((a,s)=>a+(parseFloat(s.weight)||0)*(parseFloat(s.reps)||0),0);
+      .reduce((a,s)=>a+(parseFloat(s.weight)||0)*setRepUnits(s),0);
     buckets[key]=(buckets[key]||0)+(useImperial?vol*2.20462:vol);
   });
   return Object.entries(buckets).sort(([a],[b])=>a.localeCompare(b))
@@ -6141,15 +6519,17 @@ function buildExerciseHistory(history) {
     const named = sess.namedLog || {};
     Object.entries(named).forEach(([name, sets]) => {
       if(!map[name]) map[name] = [];
-      const numSets = (sets||[]).filter(s=>s&&s.reps);
+      const numSets = (sets||[]).filter(setHasWork);
       if(!numSets.length) return;
       const best = numSets.reduce((b,s) => {
-        const w = parseFloat(s.weight)||0;
-        return w > (parseFloat(b.weight)||0) ? s : b;
+        const w = parseFloat(s.weight)||0, bw = parseFloat(b.weight)||0;
+        if(w !== bw) return w > bw ? s : b;
+        // Same load — for timed work the longest hold is the better set
+        return setSecs(s) > setSecs(b) ? s : b;
       }, numSets[0]);
       const vol = numSets.reduce((a,s)=>{
-        const w=parseFloat(s.weight)||0, r=parseFloat(s.reps)||0;
-        return a + w*r;
+        const w=parseFloat(s.weight)||0;
+        return a + w*setRepUnits(s);
       },0);
       map[name].push({date, sets:numSets, best, vol});
     });
@@ -6383,8 +6763,10 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
     const entries = exHistory[name] || [];
     if(!entries.length) return null;
     return entries.reduce((best, e) => {
-      const w = parseFloat(e.best?.weight)||0;
-      return w > (parseFloat(best?.weight)||0) ? e.best : best;
+      const w = parseFloat(e.best?.weight)||0, bw = parseFloat(best?.weight)||0;
+      if(w !== bw) return w > bw ? e.best : best;
+      // Equal load — longest hold wins for timed work, otherwise keep the incumbent
+      return setSecs(e.best) > setSecs(best) ? e.best : best;
     }, entries[0].best);
   }
 
@@ -6755,7 +7137,7 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                   const allS=Object.values(sess.exercises||{}).flat().filter(Boolean);
                   const rpeSet=allS.filter(s=>s?.rpe>0);
                   const avgRpe=rpeSet.length?(rpeSet.reduce((a,s)=>a+s.rpe,0)/rpeSet.length).toFixed(1):null;
-                  const vol=Object.values(sess.namedLog||{}).flat().filter(Boolean).reduce((a,s)=>a+(parseFloat(s.weight)||0)*(parseFloat(s.reps)||0),0);
+                  const vol=Object.values(sess.namedLog||{}).flat().filter(Boolean).reduce((a,s)=>a+(parseFloat(s.weight)||0)*setRepUnits(s),0);
                   const displayVol = useKg ? vol : vol * 2.20462;
                   return (
                     <div key={date} style={{background:"#0d0d0d",border:"1px solid #181818",borderRadius:13,
@@ -6806,7 +7188,12 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                   const last=getLastLift(name);
                   const trend=getTrend(name);
                   const goal=goals[name];
-                  const goalPct=goal&&best?Math.min(100,Math.round((parseFloat(best.weight)||0)/(parseFloat(goal.weight)||1)*100)):null;
+                  // Hold goals track time held; rep goals track weight moved
+                  const goalPct=goal&&best
+                    ? (isGoalTimed(goal)
+                        ? Math.min(100,Math.round(setSecs(best)/(goalSecs(goal)||1)*100))
+                        : Math.min(100,Math.round((parseFloat(best.weight)||0)/(parseFloat(goal.weight)||1)*100)))
+                    : null;
                   const isOpen=selectedEx===name;
                   const hasHistory=entries.length>0;
                   return (
@@ -6823,7 +7210,9 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                           <div style={{color:"#444",fontSize:12,marginTop:3}}>
                             {hasHistory ? (
                               <>{entries.length} session{entries.length!==1?"s":""} logged
-                              {best&&<span> · Best: <span style={{color:C,fontWeight:700}}>{wtDisplay(best.weight,useKg)} × {best.reps}</span></span>}</>
+                              {best&&<span> · Best: <span style={{color:C,fontWeight:700}}>
+                                {wtDisplay(best.weight,useKg)}{isDurationSet(best)?` · ${fmtDuration(setSecs(best))}`:` × ${best.reps}`}
+                              </span></span>}</>
                             ) : (
                               <span style={{color:"#333"}}>In program · not yet logged</span>
                             )}
@@ -6855,7 +7244,9 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                           {goal && (
                             <div style={{background:"#141414",border:`1px solid #222`,borderRadius:12,padding:"14px 16px",marginBottom:4}}>
                               <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                                <div style={{color:"#555",fontSize:11,letterSpacing:2}}>GOAL: {wtDisplay(goal.weight,useKg)} × {goal.reps} reps</div>
+                                <div style={{color:"#555",fontSize:11,letterSpacing:2}}>
+                                  GOAL: {wtDisplay(goal.weight,useKg)}{isGoalTimed(goal)?` · ${fmtDuration(goalSecs(goal))} hold`:` × ${goal.reps} reps`}
+                                </div>
                                 <div style={{color:goalPct>=100?"#A8FF3E":C,fontFamily:"'Bebas Neue',sans-serif",fontSize:18}}>{goalPct}%</div>
                               </div>
                               <div style={{background:"#1e1e1e",borderRadius:6,height:8,overflow:"hidden"}}>
@@ -6883,7 +7274,9 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                                   </div>}
                                   <div>
                                     <span style={{color:"#555",fontSize:11}}>BEST </span>
-                                    <span style={{color:C,fontWeight:700,fontSize:13}}>{wtDisplay(e.best?.weight,useKg)} × {e.best?.reps}</span>
+                                    <span style={{color:C,fontWeight:700,fontSize:13}}>
+                                      {wtDisplay(e.best?.weight,useKg)}{isDurationSet(e.best)?` · ${fmtDuration(setSecs(e.best))}`:` × ${e.best?.reps}`}
+                                    </span>
                                   </div>
                                 </div>
                               </div>
@@ -6892,8 +7285,8 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                                   <div key={j} style={{background:"#1a1a1a",border:"1px solid #252525",
                                     borderRadius:8,padding:"5px 10px",fontSize:12}}>
                                     <span style={{color:C,fontWeight:700}}>{wtDisplay(s.weight,useKg)}</span>
-                                    <span style={{color:"#444"}}> × </span>
-                                    <span style={{color:"#ddd"}}>{s.reps}</span>
+                                    <span style={{color:"#444"}}>{isDurationSet(s)?" · ":" × "}</span>
+                                    <span style={{color:"#ddd"}}>{setAmountLabel(s)}</span>
                                     {s.rpe>0&&<span style={{color:"#555",fontSize:10}}> R{s.rpe}</span>}
                                   </div>
                                 ))}
@@ -6981,12 +7374,19 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
               {Object.entries(goals).map(([name,goal])=>{
                 const best=getBestLift(name);
                 const bestW=parseFloat(best?.weight)||0;
+                const timedGoal=isGoalTimed(goal);
                 const goalW=parseFloat(goal.weight)||1;
                 const goalR=parseInt(goal.reps)||1;
                 const bestR=parseInt(best?.reps)||0;
-                // Progress: weight progress (primary) + reps bonus
-                const wPct=Math.min(100,Math.round(bestW/goalW*100));
-                const achieved=bestW>=goalW&&bestR>=goalR;
+                const gSecs=goalSecs(goal), bSecs=setSecs(best);
+                // Hold goals progress on time held; rep goals on weight moved.
+                // A bodyweight hold has no weight to chase, so time is the only axis.
+                const wPct=timedGoal
+                  ? Math.min(100,Math.round(bSecs/(gSecs||1)*100))
+                  : Math.min(100,Math.round(bestW/goalW*100));
+                const achieved=timedGoal
+                  ? (bSecs>=gSecs && bestW>=(parseFloat(goal.weight)||0))
+                  : (bestW>=goalW&&bestR>=goalR);
                 return (
                   <div key={name} style={{background:"#0d0d0d",
                     border:`2px solid ${achieved?"#A8FF3E33":C+"22"}`,borderRadius:18,
@@ -6998,10 +7398,14 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                       <div>
                         <div style={{fontWeight:700,fontSize:20,color:"#F0F0F0",marginBottom:4}}>{name}</div>
                         <div style={{color:"#555",fontSize:13}}>
-                          Target: <span style={{color:achieved?"#A8FF3E":C,fontWeight:700}}>{wtDisplay(goal.weight,useKg)} × {goal.reps} reps</span>
+                          Target: <span style={{color:achieved?"#A8FF3E":C,fontWeight:700}}>
+                            {wtDisplay(goal.weight,useKg)}{timedGoal?` · ${fmtDuration(gSecs)} hold`:` × ${goal.reps} reps`}
+                          </span>
                         </div>
                         {best&&<div style={{color:"#555",fontSize:12,marginTop:2}}>
-                          Best so far: <span style={{color:"#888",fontWeight:700}}>{wtDisplay(best.weight,useKg)} × {best.reps}</span>
+                          Best so far: <span style={{color:"#888",fontWeight:700}}>
+                            {wtDisplay(best.weight,useKg)}{isDurationSet(best)?` · ${fmtDuration(setSecs(best))}`:` × ${best.reps}`}
+                          </span>
                         </div>}
                       </div>
                       <div style={{display:"flex",gap:8}}>
@@ -7017,7 +7421,7 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                     {/* Progress bar */}
                     <div>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                        <div style={{color:"#383838",fontSize:11,letterSpacing:2}}>WEIGHT PROGRESS</div>
+                        <div style={{color:"#383838",fontSize:11,letterSpacing:2}}>{timedGoal?"HOLD PROGRESS":"WEIGHT PROGRESS"}</div>
                         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,
                           color:achieved?"#A8FF3E":C}}>{wPct}%</div>
                       </div>
@@ -7027,7 +7431,12 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
                           borderRadius:8,transition:"width 0.6s ease",
                           boxShadow:achieved?`0 0 12px #A8FF3E88`:`0 0 8px ${C}66`}}/>
                       </div>
-                      {!achieved&&bestW>0&&<div style={{color:"#333",fontSize:11,marginTop:6}}>
+                      {!achieved&&timedGoal&&bSecs>0&&<div style={{color:"#333",fontSize:11,marginTop:6}}>
+                        {gSecs-bSecs>0
+                          ?`${fmtDuration(gSecs-bSecs)} more to hold`
+                          :"Hold reached — add weight!"}
+                      </div>}
+                      {!achieved&&!timedGoal&&bestW>0&&<div style={{color:"#333",fontSize:11,marginTop:6}}>
                         {goalW-bestW>0
                           ?`${useKg?(goalW-bestW).toFixed(1)+" kg":kgToLbs(goalW-bestW)+" lbs"} away from target weight`
                           :"Weight reached — work on reps!"}
@@ -7060,12 +7469,26 @@ function ProgressScreen({ user, program, history, goals, onUpdateGoals, onUpdate
 function GoalModal({ exerciseName, existingGoal, allExercises, color, useKg=true, onSave, onClose }) {
   const [name, setName] = useState(exerciseName||"");
   // Display in user's preferred unit; store in kg
-  const [weight, setWeight] = useState(existingGoal?.weight ? toDisplayVal(existingGoal.weight, useKg) : "");
+  const [weight, setWeight] = useState(existingGoal?.weight&&existingGoal.weight!=="BW" ? toDisplayVal(existingGoal.weight, useKg) : "");
   const [reps, setReps] = useState(existingGoal?.reps||"");
+  const [dur, setDur] = useState(existingGoal?.duration ? String(parseDurationVal(existingGoal.duration)) : "");
+  // Timed goals target a hold length instead of a rep count. Inferred from the
+  // exercise, but explicitly overridable — some people rep out a movement others hold.
+  const [timed, setTimed] = useState(isGoalTimed(existingGoal) || (!existingGoal && isTimedByName(exerciseName)));
+  const [modeTouched, setModeTouched] = useState(false);
   const [customName, setCustomName] = useState(!allExercises.includes(exerciseName));
   const [exFilter, setExFilter] = useState("");
 
-  const canSave = name.trim() && parseFloat(weight)>0 && parseInt(reps)>0;
+  // Picking a different exercise re-infers the mode until the user sets it by hand
+  function chooseName(n){
+    setName(n);
+    if(!modeTouched) setTimed(isTimedByName(n));
+  }
+
+  // A hold goal may be pure bodyweight, so weight is optional there
+  const canSave = timed
+    ? !!(name.trim() && parseDurationVal(dur)>0)
+    : !!(name.trim() && parseFloat(weight)>0 && parseInt(reps)>0);
 
   const filteredExercises = exFilter.trim()
     ? allExercises.filter(n=>n.toLowerCase().includes(exFilter.toLowerCase()))
@@ -7095,7 +7518,7 @@ function GoalModal({ exerciseName, existingGoal, allExercises, color, useKg=true
                     placeholder="Search exercises..." color={color}/>
                   <div style={{maxHeight:200,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
                     {filteredExercises.map(n=>(
-                      <button key={n} onClick={()=>{setName(n);setExFilter("");}}
+                      <button key={n} onClick={()=>{chooseName(n);setExFilter("");}}
                         style={{background:"#1a1a1a",border:"1px solid #252525",borderRadius:10,
                           padding:"12px 16px",cursor:"pointer",textAlign:"left",color:"#F0F0F0",
                           fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:1,
@@ -7124,7 +7547,7 @@ function GoalModal({ exerciseName, existingGoal, allExercises, color, useKg=true
             </div>
           ) : (
             <div>
-              <TouchTextInput value={name} onChange={setName} placeholder="e.g. Bench Press" color={color}/>
+              <TouchTextInput value={name} onChange={chooseName} placeholder="e.g. Bench Press" color={color}/>
               {allExercises.length>0&&<button onClick={()=>{setCustomName(false);setName("");}} style={{
                 background:"none",border:"none",color:"#555",cursor:"pointer",marginTop:6,
                 fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,letterSpacing:2}}>
@@ -7135,41 +7558,65 @@ function GoalModal({ exerciseName, existingGoal, allExercises, color, useKg=true
         </div>
 
         <div style={{background:"#0a0a0a",border:"1px solid #1e1e1e",borderRadius:14,padding:"16px 18px"}}>
-          <div style={{color:"#444",fontSize:11,letterSpacing:3,marginBottom:14,fontFamily:"'Barlow Condensed',sans-serif"}}>TARGET</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <div style={{color:"#444",fontSize:11,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>TARGET</div>
+            {/* Rep goal vs. hold-time goal */}
+            <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:"1px solid #252525"}}>
+              {[{v:false,l:"REPS"},{v:true,l:"⏱ HOLD"}].map(({v,l})=>(
+                <button key={l} onClick={()=>{setTimed(v);setModeTouched(true);}}
+                  style={{padding:"6px 14px",background:timed===v?`${color}22`:"#141414",
+                    border:"none",color:timed===v?color:"#555",
+                    fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:11,
+                    letterSpacing:1,cursor:"pointer"}}>{l}</button>
+              ))}
+            </div>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
             <div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{color:"#555",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>TARGET WEIGHT</div>
+                <div style={{color:"#555",fontSize:10,letterSpacing:3,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                  {timed?"ADDED WEIGHT":"TARGET WEIGHT"}
+                </div>
                 <div style={{color:color,fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",
                   background:`${color}18`,border:`1px solid ${color}44`,borderRadius:6,padding:"2px 8px",letterSpacing:1}}>
                   {useKg?"KG":"LBS"}
                 </div>
               </div>
               <input type="number" value={weight} onChange={e=>setWeight(e.target.value)}
-                placeholder={useKg?"e.g. 100":"e.g. 225"}
+                placeholder={timed?"blank = bodyweight":(useKg?"e.g. 100":"e.g. 225")}
                 style={{width:"100%",background:"#111",border:`2px solid ${color}44`,borderRadius:12,
                   color:"#F0F0F0",fontSize:22,padding:"14px 16px",fontFamily:"'Barlow',sans-serif",
                   outline:"none",boxSizing:"border-box",fontWeight:700}}/>
-              {weight && <div style={{color:"#444",fontSize:11,marginTop:5}}>
-                = {useKg ? `${(parseFloat(weight)*2.20462).toFixed(1)} lbs` : `${(parseFloat(weight)/2.20462).toFixed(1)} kg`}
-              </div>}
+              {weight
+                ? <div style={{color:"#444",fontSize:11,marginTop:5}}>
+                    = {useKg ? `${(parseFloat(weight)*2.20462).toFixed(1)} lbs` : `${(parseFloat(weight)/2.20462).toFixed(1)} kg`}
+                  </div>
+                : timed&&<div style={{color:"#3a3a3a",fontSize:11,marginTop:5}}>Bodyweight hold</div>}
             </div>
             <div>
-              <div style={{color:"#555",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>TARGET REPS</div>
-              <RepsSpinner value={reps} onChange={setReps} color={color} placeholder="5"/>
+              <div style={{color:"#555",fontSize:10,letterSpacing:3,marginBottom:8,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                {timed?"TARGET HOLD":"TARGET REPS"}
+              </div>
+              {timed
+                ? <DurationSpinner value={dur} onChange={setDur} color={color} placeholder={60}/>
+                : <RepsSpinner value={reps} onChange={setReps} color={color} placeholder="5"/>}
             </div>
           </div>
-          {name&&weight&&reps&&<div style={{marginTop:14,padding:"10px 14px",background:`${color}0e`,
+          {name&&canSave&&<div style={{marginTop:14,padding:"10px 14px",background:`${color}0e`,
             border:`1px solid ${color}33`,borderRadius:10,color:color,
             fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,textAlign:"center"}}>
-            GOAL: {name.toUpperCase()} — {weight} {useKg?'KG':'LBS'} × {reps} REPS
+            GOAL: {name.toUpperCase()} — {timed
+              ? `${weight?`${weight} ${useKg?'KG':'LBS'}`:'BW'} · ${fmtDuration(parseDurationVal(dur))} HOLD`
+              : `${weight} ${useKg?'KG':'LBS'} × ${reps} REPS`}
           </div>}
         </div>
 
         <div style={{display:"flex",gap:12}}>
           <Btn full label="CANCEL" bg="transparent" color="#555" border="#222" onClick={onClose}/>
           <Btn full label="SAVE GOAL" bg={color} color="#000" disabled={!canSave}
-            onClick={()=>onSave(name.trim(),{weight: toStoredKg(weight, useKg), reps})}/>  
+            onClick={()=>onSave(name.trim(), timed
+              ? {weight: weight ? toStoredKg(weight, useKg) : "BW", duration: parseDurationVal(dur)}
+              : {weight: toStoredKg(weight, useKg), reps})}/>
         </div>
       </div>
     </Modal>
@@ -7319,7 +7766,9 @@ function App() {
     const prog=programs[uid]||{id:mkId(),name:"My Program",weeks:8,days:[]};
     const newDay={id:mkId(),label:dayData.label||"Freestyle",days:[],scheduleType:"frequency",timesPerWeek:3,
       defaultMode:dayData.defaultMode||"traditional",
-      exercises:(dayData.exercises||[]).map(ex=>({id:mkId(),name:ex.name,sets:ex.sets||3,reps:String(ex.reps||10),rest:ex.rest||60,setup:"",groupId:null,progression:{type:"fixed",value:0}}))};
+      exercises:(dayData.exercises||[]).map(ex=>({id:mkId(),name:ex.name,sets:ex.sets||3,reps:String(ex.reps||10),
+        mode:exMode(ex),...(isDurationEx(ex)?{duration:exTargetSecs(ex)}:{}),
+        rest:ex.rest||60,setup:"",groupId:null,progression:{type:"fixed",value:0}}))};
     const updated={...prog,days:[...prog.days,newDay]};
     savePrograms({...programs,[uid]:updated});
   };
